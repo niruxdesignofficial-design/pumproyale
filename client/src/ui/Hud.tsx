@@ -19,7 +19,7 @@ export function Hud({ state }: { state: GameState }) {
         <>
           <div className="hud-panel hud-topleft">
             <div className="hud-title">Party Royale</div>
-            <div className="hud-sub">Phase 1 - scaffold &amp; render</div>
+            <div className="hud-sub">Phase 2 - physics sandbox</div>
           </div>
 
           <div className="hud-panel hud-topright">
@@ -40,7 +40,9 @@ export function Hud({ state }: { state: GameState }) {
             </div>
           )}
 
-          <div className="hud-hint">Drag to orbit, scroll to zoom</div>
+          <div className="hud-hint">
+            WASD move &middot; Shift run &middot; Space jump &middot; Ctrl dive &middot; drag to orbit
+          </div>
         </>
       )}
     </div>

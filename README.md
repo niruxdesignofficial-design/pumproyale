@@ -4,10 +4,24 @@ A web-based, physics-driven party battle-royale game (Fall Guys / Stumble Guys
 style): Three.js rendering, server-authoritative multiplayer, and a Solana
 (devnet) wallet + rewards layer. Built in phases.
 
-> Status: **Phase 1 - Scaffold & Render.** The monorepo is set up and the client
-> renders a lit scene with an orbit camera and a rigged KayKit character playing
-> its idle animation. Physics, multiplayer, minigames, wallet, and rewards land
-> in later phases.
+> Status: **Phase 2 - Local controller & physics.** A single-player physics
+> sandbox: a Rapier capsule controller (move, run, jump, dive) with a smoothed
+> third-person follow camera, a finite platform you can fall off (with respawn),
+> and a greybox bumper that knocks the player back. Authoritative multiplayer,
+> minigames, wallet, and rewards land in later phases.
+
+### Controls (Phase 2 sandbox)
+
+| Input            | Action                          |
+| ---------------- | ------------------------------- |
+| W A S D / arrows | Move (relative to the camera)   |
+| Shift            | Run                             |
+| Space            | Jump                            |
+| Ctrl             | Dive (forward lunge)            |
+| Mouse drag       | Orbit camera                    |
+| Mouse wheel      | Zoom                            |
+
+Run off the platform edge to fall; you respawn at the center.
 
 ## Tech stack
 

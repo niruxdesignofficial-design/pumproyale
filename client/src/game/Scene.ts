@@ -1,47 +1,60 @@
 import * as THREE from "three";
 
+/** Half-extent of the square play platform (world units). Edges at +/-this. */
+export const PLATFORM_HALF = 12;
+
+/** Platform slab thickness; its top surface sits at y = 0. */
+export const PLATFORM_THICKNESS = 1;
+
 /**
- * Builds the static environment for Phase 1: lighting, a shadow-receiving
- * ground plane with a subtle grid, and light fog for depth. Later phases swap
- * the ground for real KayKit map geometry via the MapRegistry.
+ * Builds the static environment: lighting, a finite play platform (so the
+ * player can fall off the edge), a reference grid, and fog. The platform is
+ * finite by design - Phase 2 acceptance includes falling off the edge.
+ *
+ * The visual platform is sized from PLATFORM_HALF / PLATFORM_THICKNESS so the
+ * Rapier collider built in Game.ts lines up exactly.
  */
 export function createScene(): THREE.Scene {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x10131a);
-  scene.fog = new THREE.Fog(0x10131a, 25, 70);
+  scene.fog = new THREE.Fog(0x10131a, 30, 90);
 
-  // Ambient sky/ground fill.
   const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x39402f, 0.9);
   hemi.position.set(0, 20, 0);
   scene.add(hemi);
 
-  // Key light, casts shadows.
   const sun = new THREE.DirectionalLight(0xfff2e0, 2.2);
-  sun.position.set(8, 14, 6);
+  sun.position.set(8, 16, 6);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 50;
-  sun.shadow.camera.left = -15;
-  sun.shadow.camera.right = 15;
-  sun.shadow.camera.top = 15;
-  sun.shadow.camera.bottom = -15;
+  sun.shadow.camera.far = 60;
+  sun.shadow.camera.left = -20;
+  sun.shadow.camera.right = 20;
+  sun.shadow.camera.top = 20;
+  sun.shadow.camera.bottom = -20;
   sun.shadow.bias = -0.0004;
   scene.add(sun);
 
-  // Ground plane.
-  const groundMat = new THREE.MeshStandardMaterial({
+  // Finite platform slab. Top surface at y = 0.
+  const size = PLATFORM_HALF * 2;
+  const platformMat = new THREE.MeshStandardMaterial({
     color: 0x3a4a5a,
     roughness: 0.95,
     metalness: 0.0,
   });
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), groundMat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  scene.add(ground);
+  const platform = new THREE.Mesh(
+    new THREE.BoxGeometry(size, PLATFORM_THICKNESS, size),
+    platformMat,
+  );
+  platform.position.y = -PLATFORM_THICKNESS / 2;
+  platform.receiveShadow = true;
+  platform.castShadow = true;
+  scene.add(platform);
 
-  // Subtle grid for spatial reference.
-  const grid = new THREE.GridHelper(80, 80, 0x55617a, 0x2a3344);
+  // Grid on the platform surface for spatial reference.
+  const grid = new THREE.GridHelper(size, size, 0x55617a, 0x2a3344);
+  grid.position.y = 0.01;
   const gridMat = grid.material as THREE.Material;
   gridMat.transparent = true;
   gridMat.opacity = 0.35;
