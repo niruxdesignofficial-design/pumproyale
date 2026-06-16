@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# raw downloaded asset packs (CC0, but large; not committed)
+assets-source/*
+!assets-source/.gitkeep
+
+# generated runtime assets (produced by `pnpm assets:prepare`)
+client/public/assets/*
+!client/public/assets/.gitkeep
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.log

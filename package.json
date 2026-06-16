@@ -1,0 +1,31 @@
+{
+  "name": "party-royale",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Web-based physics party battle-royale (Three.js + Colyseus + Solana). Phase 1: scaffold and render.",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @party-royale/client dev",
+    "build": "pnpm --filter @party-royale/client build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "assets:prepare": "node scripts/prepare-assets.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2"
+  }
+}
