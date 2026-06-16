@@ -150,6 +150,30 @@ body,
   font-size: 14px;
 }
 
+.hud-center-big {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 120px;
+  font-weight: 800;
+  color: var(--text);
+  text-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.hud-win-title {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--accent);
+  text-shadow: 0 2px 20px rgba(111, 177, 255, 0.4);
+}
+
+.hud-warn-bottom {
+  bottom: 56px;
+}
+
 .hud-error-title {
   font-size: 18px;
   font-weight: 700;

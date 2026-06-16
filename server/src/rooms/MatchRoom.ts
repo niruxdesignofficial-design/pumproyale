@@ -12,35 +12,64 @@ import {
 } from "@party-royale/shared";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { PlayerSim } from "../physics/PlayerSim";
+import { BotController } from "../ai/BotController";
+import { createMinigame } from "../match/MinigameRegistry";
+import type { IMinigame, MinigameContext } from "../match/IMinigame";
 import { MatchState, PlayerState } from "./schema";
 
+/** Lobby fill window once the first human joins (seconds). */
+const FILL_WAIT = 8;
+const COUNTDOWN = 4;
+const END_SCREEN = 12;
+const MIN_HUMANS = 1;
+
+type Phase = "waiting" | "countdown" | "playing" | "ended";
+
 /**
- * Authoritative match room. Runs one Rapier world at a fixed tick, applies each
- * client's latest input, and broadcasts the resulting transforms via schema
- * state. Clients can only send input intents (see messages.ts), so they cannot
- * teleport or report results.
+ * Authoritative match room with the full Phase 4 flow:
+ * waiting (lobby) -> fill empty slots with bots -> countdown -> one or more
+ * minigame rounds (eliminating players) -> ended (exactly one winner).
  *
- * Phase 3 keeps the match in a single continuous "playing" phase with bumper
- * knockback and fall-respawn. Phase 4 layers rounds, bots, and elimination on
- * top of this loop.
+ * All scoring, elimination, round transitions, and the winner are decided here.
+ * Clients only send input intents.
  */
 export class MatchRoom extends Room<MatchState> {
   override maxClients = MAX_PLAYERS;
 
   private physics!: PhysicsWorld;
   private readonly sims = new Map<string, PlayerSim>();
+  private readonly bots = new Map<string, BotController>();
+  private ctx!: MinigameContext;
+
   private spawnCounter = 0;
+  private botCounter = 0;
+  private botSeq = 0;
+
+  private fillTimer = FILL_WAIT;
+  private phaseTimer = 0;
+  private roundIndex = 0;
+  private roundElapsed = 0;
+  private minigame: IMinigame | null = null;
 
   override async onCreate(): Promise<void> {
     this.state = new MatchState();
-    this.state.phase = "playing";
+    this.state.phase = "waiting";
 
     this.physics = await PhysicsWorld.create(PHYS.gravity, 1 / TICK_RATE);
     this.buildArena();
 
+    this.ctx = {
+      physics: this.physics,
+      state: this.state,
+      sims: this.sims,
+      aliveIds: () => [...this.sims.keys()],
+      eliminate: (id, reason) => this.eliminate(id, reason),
+      botTarget: (id) => this.minigame?.botTarget?.(id, this.ctx) ?? { x: 0, z: 0 },
+    };
+
     this.onMessage(INPUT_MESSAGE, (client, message: InputIntent) => {
-      const sim = this.sims.get(client.sessionId);
-      if (sim) sim.setInput(sanitizeInput(message));
+      if (this.state.phase === "ended") return;
+      this.sims.get(client.sessionId)?.setInput(sanitizeInput(message));
     });
 
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), 1000 / TICK_RATE);
@@ -48,8 +77,7 @@ export class MatchRoom extends Room<MatchState> {
 
   override onJoin(client: Client, options?: JoinOptions): void {
     const spawn = spawnPoint(this.spawnCounter++, MAX_PLAYERS);
-    const sim = new PlayerSim(this.physics, spawn);
-    this.sims.set(client.sessionId, sim);
+    this.sims.set(client.sessionId, new PlayerSim(this.physics, spawn));
 
     const player = new PlayerState();
     player.name = sanitizeName(options?.name) ?? `Player-${this.spawnCounter}`;
@@ -58,17 +86,19 @@ export class MatchRoom extends Room<MatchState> {
     player.y = spawn.y;
     player.z = spawn.z;
     this.state.players.set(client.sessionId, player);
+    this.state.alive = this.sims.size;
 
     console.log(`[match ${this.roomId}] join ${client.sessionId} (${player.name})`);
   }
 
   override onLeave(client: Client): void {
-    const sim = this.sims.get(client.sessionId);
-    if (sim) {
-      sim.destroy();
-      this.sims.delete(client.sessionId);
+    if (this.state.phase === "playing" && this.sims.has(client.sessionId)) {
+      this.eliminate(client.sessionId, "left");
+    } else {
+      this.removeSim(client.sessionId);
+      this.state.players.delete(client.sessionId);
     }
-    this.state.players.delete(client.sessionId);
+    this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] leave ${client.sessionId}`);
   }
 
@@ -76,16 +106,44 @@ export class MatchRoom extends Room<MatchState> {
     this.physics?.dispose();
   }
 
+  // --- main loop -----------------------------------------------------------
+
   private update(deltaMs: number): void {
     const dt = deltaMs / 1000;
+    this.simulate(dt);
 
-    for (const sim of this.sims.values()) sim.preStep(dt);
+    switch (this.state.phase as Phase) {
+      case "waiting":
+        this.updateWaiting(dt);
+        break;
+      case "countdown":
+        this.updateCountdown(dt);
+        break;
+      case "playing":
+        this.updatePlaying(dt);
+        break;
+      case "ended":
+        this.updateEnded(dt);
+        break;
+    }
+  }
+
+  /** Step physics for all sims and publish transforms. */
+  private simulate(dt: number): void {
+    const allowRespawn = this.state.phase === "waiting" || this.state.phase === "countdown";
+
+    for (const [id, sim] of this.sims) {
+      const ai = this.bots.get(id);
+      if (ai) sim.setInput(ai.think(sim, this.ctx.botTarget(id), dt, this.botSeq++));
+      sim.preStep(dt);
+    }
+
     this.physics.step();
 
     for (const [id, sim] of this.sims) {
       sim.postStep();
       this.resolveBumpers(sim);
-      if (sim.fellOff) sim.respawn();
+      if (allowRespawn && sim.fellOff) sim.respawn();
 
       const player = this.state.players.get(id);
       if (!player) continue;
@@ -98,6 +156,132 @@ export class MatchRoom extends Room<MatchState> {
     }
   }
 
+  private updateWaiting(dt: number): void {
+    const humans = this.clients.length;
+    if (humans < MIN_HUMANS) {
+      this.fillTimer = FILL_WAIT;
+      this.state.timer = 0;
+      return;
+    }
+    this.fillTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.fillTimer));
+    if (humans >= MAX_PLAYERS || this.fillTimer <= 0) this.startMatch();
+  }
+
+  private updateCountdown(dt: number): void {
+    this.phaseTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+    if (this.phaseTimer <= 0) {
+      this.state.phase = "playing";
+      this.roundIndex = 0;
+      this.startRound();
+    }
+  }
+
+  private updatePlaying(dt: number): void {
+    if (!this.minigame) return;
+    this.roundElapsed += dt;
+    this.minigame.update(this.ctx, dt);
+    this.state.alive = this.sims.size;
+    this.state.timer = Math.max(0, Math.ceil(this.minigame.maxDuration - this.roundElapsed));
+
+    if (this.minigame.isComplete(this.ctx)) {
+      if (this.sims.size <= 1) this.endMatch();
+      else this.nextRound();
+    }
+  }
+
+  private updateEnded(dt: number): void {
+    this.phaseTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+    if (this.phaseTimer <= 0) void this.disconnect();
+  }
+
+  // --- transitions ---------------------------------------------------------
+
+  private startMatch(): void {
+    this.lock();
+    this.autoDispose = false;
+    while (this.sims.size < MAX_PLAYERS) this.addBot();
+    this.state.phase = "countdown";
+    this.phaseTimer = COUNTDOWN;
+    this.state.alive = this.sims.size;
+    console.log(`[match ${this.roomId}] starting with ${this.sims.size} players`);
+  }
+
+  private startRound(): void {
+    this.minigame?.teardown(this.ctx);
+    this.minigame = createMinigame(this.roundIndex);
+    this.roundElapsed = 0;
+    this.state.round = this.roundIndex + 1;
+    this.minigame.setup(this.ctx);
+    console.log(`[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name}`);
+  }
+
+  private nextRound(): void {
+    this.roundIndex += 1;
+    this.startRound();
+  }
+
+  private endMatch(): void {
+    this.minigame?.teardown(this.ctx);
+    this.minigame = null;
+    this.state.phase = "ended";
+    this.phaseTimer = END_SCREEN;
+
+    const winnerId = this.sims.keys().next().value as string | undefined;
+    if (winnerId) {
+      const winner = this.state.players.get(winnerId);
+      if (winner) {
+        winner.alive = true;
+        winner.placement = 1;
+        winner.anim = "win";
+        this.state.winnerId = winnerId;
+        this.state.winnerName = winner.name;
+      }
+    }
+    this.state.alive = this.sims.size;
+    console.log(`[match ${this.roomId}] winner: ${this.state.winnerName || "(none)"}`);
+  }
+
+  // --- helpers -------------------------------------------------------------
+
+  private addBot(): void {
+    const id = `bot-${++this.botCounter}`;
+    const spawn = spawnPoint(this.spawnCounter++, MAX_PLAYERS);
+    this.sims.set(id, new PlayerSim(this.physics, spawn));
+    this.bots.set(id, new BotController());
+
+    const player = new PlayerState();
+    player.name = `Bot-${this.botCounter}`;
+    player.isBot = true;
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.z = spawn.z;
+    this.state.players.set(id, player);
+  }
+
+  private eliminate(id: string, reason: string): void {
+    const sim = this.sims.get(id);
+    if (!sim) return;
+    const before = this.sims.size;
+    const player = this.state.players.get(id);
+    if (player) {
+      player.alive = false;
+      player.placement = before;
+      player.anim = "lose";
+    }
+    this.removeSim(id);
+    this.state.alive = this.sims.size;
+    console.log(`[match ${this.roomId}] eliminate ${id} (${reason}) -> placement ${before}`);
+  }
+
+  private removeSim(id: string): void {
+    this.sims.get(id)?.destroy();
+    this.sims.delete(id);
+    this.bots.delete(id);
+  }
+
   private resolveBumpers(sim: PlayerSim): void {
     if (sim.bumperCooldown > 0) return;
     const p = sim.position;
@@ -107,9 +291,7 @@ export class MatchRoom extends Room<MatchState> {
       const dist = Math.hypot(dx, dz);
       if (dist <= b.radius + PHYS.capsuleRadius + PHYS.bumperTriggerPad) {
         const inv = dist > 1e-4 ? 1 / dist : 0;
-        const nx = inv === 0 ? 1 : dx * inv;
-        const nz = inv === 0 ? 0 : dz * inv;
-        sim.applyKnockback(nx, nz, PHYS.knockStrength);
+        sim.applyKnockback(inv === 0 ? 1 : dx * inv, inv === 0 ? 0 : dz * inv, PHYS.knockStrength);
         return;
       }
     }
@@ -117,7 +299,6 @@ export class MatchRoom extends Room<MatchState> {
 
   private buildArena(): void {
     const world = this.physics.world;
-    // Platform slab (top surface at y = 0).
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(
         ARENA.platformHalf,
@@ -125,7 +306,6 @@ export class MatchRoom extends Room<MatchState> {
         ARENA.platformHalf,
       ).setTranslation(0, -ARENA.platformThickness / 2, 0),
     );
-    // Bumper colliders.
     const bumperHeight = 1.4;
     for (const b of ARENA.bumpers) {
       world.createCollider(

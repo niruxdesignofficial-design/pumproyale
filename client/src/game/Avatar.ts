@@ -74,6 +74,11 @@ export class Avatar {
     return this.object3d.position;
   }
 
+  /** Hide eliminated players (they have left the round). */
+  setEliminated(eliminated: boolean): void {
+    this.object3d.visible = !eliminated;
+  }
+
   dispose(): void {
     this.mixer?.stopAllAction();
     for (const d of this.disposables) d.dispose();

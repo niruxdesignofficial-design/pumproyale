@@ -1,32 +1,28 @@
+import type { ReactNode } from "react";
 import { MAX_PLAYERS } from "@party-royale/shared";
 import type { GameState } from "../game/store";
 
 /**
- * Heads-up display. Shows a connecting overlay, an error overlay if the server
- * is unreachable, and the live match HUD (FPS, player count, controls) once
- * connected.
+ * Heads-up display covering the whole match flow: connecting/error overlays, the
+ * lobby fill timer, the countdown, the live round HUD, and the end screen.
  */
 export function Hud({ state }: { state: GameState }) {
   if (state.status === "error") {
     return (
-      <div className="hud">
-        <div className="hud-loading">
-          <div className="hud-error-title">Connection lost</div>
-          <span>{state.error || "Could not reach the game server."}</span>
-          <span className="hud-dim">Start the server with `pnpm dev` and reload.</span>
-        </div>
-      </div>
+      <Overlay>
+        <div className="hud-error-title">Connection lost</div>
+        <span>{state.error || "Could not reach the game server."}</span>
+        <span className="hud-dim">Start the server with `pnpm dev` and reload.</span>
+      </Overlay>
     );
   }
 
   if (state.status === "connecting") {
     return (
-      <div className="hud">
-        <div className="hud-loading">
-          <div className="hud-spinner" />
-          <span>Connecting to match...</span>
-        </div>
-      </div>
+      <Overlay>
+        <div className="hud-spinner" />
+        <span>Connecting to match...</span>
+      </Overlay>
     );
   }
 
@@ -34,7 +30,11 @@ export function Hud({ state }: { state: GameState }) {
     <div className="hud">
       <div className="hud-panel hud-topleft">
         <div className="hud-title">Party Royale</div>
-        <div className="hud-sub">Phase 3 - online sandbox</div>
+        <div className="hud-sub">
+          {state.matchPhase === "playing" && state.minigame
+            ? `Round ${state.round}: ${state.minigame}`
+            : "Phase 4 - elimination"}
+        </div>
       </div>
 
       <div className="hud-panel hud-topright">
@@ -43,23 +43,75 @@ export function Hud({ state }: { state: GameState }) {
           <span className="hud-value">{state.fps}</span>
         </div>
         <div className="hud-stat">
-          <span className="hud-label">Players</span>
+          <span className="hud-label">{state.matchPhase === "playing" ? "Alive" : "Players"}</span>
           <span className="hud-value">
-            {state.playerCount}/{MAX_PLAYERS}
+            {state.matchPhase === "playing" ? state.alivePlayers : state.playerCount}/{MAX_PLAYERS}
           </span>
         </div>
+        {(state.matchPhase === "playing" || state.matchPhase === "countdown") && (
+          <div className="hud-stat">
+            <span className="hud-label">Time</span>
+            <span className="hud-value">{state.timer}s</span>
+          </div>
+        )}
       </div>
 
-      {state.usingFallback && (
+      {state.matchPhase === "waiting" && (
+        <Overlay>
+          <div className="hud-spinner" />
+          <span>Waiting for players...</span>
+          <span className="hud-dim">
+            {state.playerCount}/{MAX_PLAYERS} joined &middot; filling with bots in {state.timer}s
+          </span>
+        </Overlay>
+      )}
+
+      {state.matchPhase === "countdown" && (
+        <div className="hud-center-big">{state.timer > 0 ? state.timer : "Go!"}</div>
+      )}
+
+      {state.matchPhase === "playing" && !state.localAlive && (
         <div className="hud-warn">
-          Showing placeholder characters. Run <code>pnpm assets:prepare</code> to load the KayKit
-          model.
+          Eliminated{state.localPlacement > 0 ? ` - placed #${state.localPlacement}` : ""}.
+          Spectating...
         </div>
       )}
 
-      <div className="hud-hint">
-        WASD move &middot; Shift run &middot; Space jump &middot; Ctrl dive &middot; drag to orbit
-      </div>
+      {state.matchPhase === "ended" && (
+        <Overlay>
+          {state.isLocalWinner ? (
+            <div className="hud-win-title">You win!</div>
+          ) : (
+            <>
+              <div className="hud-win-title">{state.winnerName || "Nobody"} wins</div>
+              {state.localPlacement > 0 && (
+                <span className="hud-dim">You placed #{state.localPlacement}</span>
+              )}
+            </>
+          )}
+          <span className="hud-dim">Next match starting soon...</span>
+        </Overlay>
+      )}
+
+      {state.usingFallback && (
+        <div className="hud-warn hud-warn-bottom">
+          Placeholder characters. Run <code>pnpm assets:prepare</code> for the KayKit model.
+        </div>
+      )}
+
+      {(state.matchPhase === "playing" || state.matchPhase === "countdown") && (
+        <div className="hud-hint">
+          WASD move &middot; Shift run &middot; Space jump &middot; Ctrl dive &middot; drag to orbit
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Overlay({ children }: { children: ReactNode }) {
+  return (
+    <div className="hud">
+      <div className="hud-loading">{children}</div>
     </div>
   );
 }

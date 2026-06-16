@@ -39,11 +39,15 @@ defineTypes(PlayerState, {
  */
 export class MatchState extends Schema {
   players = new MapSchema<PlayerState>();
-  phase = "lobby";
+  phase = "waiting";
   round = 0;
   minigame = "";
   /** Seconds remaining in the current phase, for the HUD. */
   timer = 0;
+  /** Number of players still in the match. */
+  alive = 0;
+  /** Survival safe-zone radius (0 when not in use). */
+  zoneRadius = 0;
   winnerId = "";
   winnerName = "";
 }
@@ -54,6 +58,8 @@ defineTypes(MatchState, {
   round: "number",
   minigame: "string",
   timer: "number",
+  alive: "number",
+  zoneRadius: "number",
   winnerId: "string",
   winnerName: "string",
 });

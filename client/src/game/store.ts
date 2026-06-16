@@ -10,12 +10,16 @@ export interface GameState {
   readonly playerCount: number;
   readonly usingFallback: boolean;
   readonly error: string;
-  // Match flow (populated from Phase 4 onward).
+  // Match flow.
   readonly matchPhase: string;
   readonly round: number;
   readonly minigame: string;
   readonly timer: number;
-  readonly alive: boolean;
+  readonly alivePlayers: number;
+  // Local player.
+  readonly localAlive: boolean;
+  readonly localPlacement: number;
+  readonly isLocalWinner: boolean;
   readonly winnerName: string;
 }
 
@@ -29,7 +33,10 @@ const INITIAL: GameState = {
   round: 0,
   minigame: "",
   timer: 0,
-  alive: true,
+  alivePlayers: 0,
+  localAlive: true,
+  localPlacement: 0,
+  isLocalWinner: false,
   winnerName: "",
 };
 

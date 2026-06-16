@@ -7,11 +7,13 @@ import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { NetClient, defaultServerUrl } from "../net/NetClient";
 import { createScene } from "./Scene";
+import { SafeZone } from "./SafeZone";
 import { Avatar } from "./Avatar";
 import { loadCharacterGltf } from "./characterModel";
 import { gameStore } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
+const CENTER = new THREE.Vector3(0, 1, 0);
 const SEND_INTERVAL = 1 / 30;
 
 /** Minimal shape of a synced player, for reading authoritative state. */
@@ -31,8 +33,8 @@ interface NetPlayer {
 /**
  * Networked game client. Connects to the authoritative Colyseus match room,
  * renders an Avatar per player interpolated toward server transforms, samples
- * local input and sends it as intents, and follows the local player with the
- * camera. It holds no authoritative state of its own.
+ * local input and sends it as intents, mirrors match flow into the store, and
+ * follows the local player (or the arena, while spectating).
  */
 export class Game {
   private readonly renderer: Renderer;
@@ -41,11 +43,14 @@ export class Game {
   private readonly input = new Input();
   private readonly loop: GameLoop;
   private readonly net = new NetClient();
+  private readonly zone = new SafeZone();
 
   private readonly avatars = new Map<string, Avatar>();
   private gltf: Awaited<ReturnType<typeof loadCharacterGltf>> = null;
   private localId: string | null = null;
+  private localAlive = true;
   private cameraSnapped = false;
+  private zoneRadius = 0;
 
   private disposed = false;
   private seq = 0;
@@ -58,6 +63,7 @@ export class Game {
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     this.scene = createScene();
+    this.scene.add(this.zone.object3d);
     this.cameraRig = new CameraRig(canvas, this.aspect());
     this.renderer.setSize(this.width(), this.height());
     this.loop = new GameLoop(this.onFrame);
@@ -85,11 +91,7 @@ export class Game {
     this.wireRoom(room);
 
     this.input.attach();
-    gameStore.set({
-      status: "connected",
-      usingFallback: this.gltf === null,
-      matchPhase: readString(room.state, "phase"),
-    });
+    gameStore.set({ status: "connected", usingFallback: this.gltf === null });
     this.loop.start();
   }
 
@@ -115,7 +117,7 @@ export class Game {
       avatar.setAnim(asAnim(player.anim));
       this.scene.add(avatar.object3d);
       this.avatars.set(sessionId, avatar);
-      this.publishPlayerCount();
+      gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
 
       if (sessionId === this.localId && !this.cameraSnapped) {
         this.cameraRig.snapTo(avatar.position);
@@ -125,6 +127,11 @@ export class Game {
       $(player).onChange(() => {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
         avatar.setAnim(asAnim(player.anim));
+        avatar.setEliminated(!player.alive);
+        if (sessionId === this.localId) {
+          this.localAlive = player.alive;
+          gameStore.set({ localAlive: player.alive, localPlacement: player.placement });
+        }
       });
     });
 
@@ -135,10 +142,20 @@ export class Game {
         avatar.dispose();
         this.avatars.delete(sessionId);
       }
-      this.publishPlayerCount();
+      gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
     });
 
-    $(room.state).listen?.("phase", (value: string) => gameStore.set({ matchPhase: value }));
+    const s = $(room.state);
+    s.listen?.("phase", (v: string) => gameStore.set({ matchPhase: v }));
+    s.listen?.("round", (v: number) => gameStore.set({ round: v }));
+    s.listen?.("minigame", (v: string) => gameStore.set({ minigame: v }));
+    s.listen?.("timer", (v: number) => gameStore.set({ timer: v }));
+    s.listen?.("alive", (v: number) => gameStore.set({ alivePlayers: v }));
+    s.listen?.("zoneRadius", (v: number) => (this.zoneRadius = v));
+    s.listen?.("winnerName", (v: string) => gameStore.set({ winnerName: v }));
+    s.listen?.("winnerId", (v: string) =>
+      gameStore.set({ isLocalWinner: v.length > 0 && v === this.localId }),
+    );
 
     room.onLeave(() => {
       if (!this.disposed) gameStore.set({ status: "error", error: "Disconnected from server." });
@@ -146,7 +163,6 @@ export class Game {
   }
 
   private readonly onFrame = (dt: number): void => {
-    // Send input to the server at a fixed rate.
     this.sendAccum += dt;
     if (this.sendAccum >= SEND_INTERVAL && this.net.room) {
       this.sendAccum = 0;
@@ -154,9 +170,10 @@ export class Game {
     }
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
+    this.zone.setRadius(this.zoneRadius);
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
-    if (local) this.cameraRig.follow(local.position);
+    this.cameraRig.follow(local && this.localAlive ? local.position : CENTER);
     this.cameraRig.update();
     this.renderer.render(this.scene, this.cameraRig.camera);
 
@@ -184,10 +201,6 @@ export class Game {
     };
   }
 
-  private publishPlayerCount(): void {
-    gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
-  }
-
   private readonly onResize = (): void => {
     this.renderer.setSize(this.width(), this.height());
     this.cameraRig.setAspect(this.aspect());
@@ -209,11 +222,6 @@ export class Game {
 const ANIM_STATES = new Set(["idle", "run", "jump", "fall", "dive", "hit", "win", "lose"]);
 function asAnim(value: string): AnimationState {
   return (ANIM_STATES.has(value) ? value : "idle") as AnimationState;
-}
-
-function readString(state: unknown, key: string): string {
-  const v = (state as Record<string, unknown>)?.[key];
-  return typeof v === "string" ? v : "";
 }
 
 function colorForId(id: string): number {
