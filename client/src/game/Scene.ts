@@ -1,15 +1,21 @@
 import * as THREE from "three";
 import { ARENA } from "@party-royale/shared";
 
-const BUMPER_HEIGHT = 1.4;
+export interface BuiltScene {
+  scene: THREE.Scene;
+  /** The solid platform mesh (hidden during Hex Fall). */
+  platform: THREE.Mesh;
+  /** The reference grid (hidden during Hex Fall). */
+  grid: THREE.GridHelper;
+}
 
 /**
- * Builds the static environment from the shared ARENA definition: lighting, the
- * finite platform, a reference grid, the bumper visuals, and fog. The colliders
- * for these live on the server (authoritative); the client only renders them, so
- * client and server geometry stay aligned through the same ARENA constants.
+ * Builds the persistent environment: lighting, the base platform, a reference
+ * grid, and fog. Minigame-specific geometry (bumpers, race obstacles, hex tiles)
+ * is added by MinigameViews. The platform/grid are returned so Hex Fall can hide
+ * them when the floor is replaced by tiles.
  */
-export function createScene(): THREE.Scene {
+export function createScene(): BuiltScene {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x10131a);
   scene.fog = new THREE.Fog(0x10131a, 30, 90);
@@ -31,7 +37,6 @@ export function createScene(): THREE.Scene {
   sun.shadow.bias = -0.0004;
   scene.add(sun);
 
-  // Finite platform slab (top surface at y = 0).
   const size = ARENA.platformHalf * 2;
   const platform = new THREE.Mesh(
     new THREE.BoxGeometry(size, ARENA.platformThickness, size),
@@ -49,22 +54,5 @@ export function createScene(): THREE.Scene {
   gridMat.opacity = 0.35;
   scene.add(grid);
 
-  // Bumper visuals.
-  const bumperMat = new THREE.MeshStandardMaterial({
-    color: 0xff5d73,
-    roughness: 0.5,
-    emissive: 0x220008,
-  });
-  for (const b of ARENA.bumpers) {
-    const bumper = new THREE.Mesh(
-      new THREE.CylinderGeometry(b.radius, b.radius, BUMPER_HEIGHT, 24),
-      bumperMat,
-    );
-    bumper.position.set(b.x, BUMPER_HEIGHT / 2, b.z);
-    bumper.castShadow = true;
-    bumper.receiveShadow = true;
-    scene.add(bumper);
-  }
-
-  return scene;
+  return { scene, platform, grid };
 }

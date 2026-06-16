@@ -40,6 +40,8 @@ export class MatchRoom extends Room<MatchState> {
   private readonly sims = new Map<string, PlayerSim>();
   private readonly bots = new Map<string, BotController>();
   private ctx!: MinigameContext;
+  private platformCollider: RAPIER.Collider | null = null;
+  private survivorsTarget = 1;
 
   private spawnCounter = 0;
   private botCounter = 0;
@@ -56,7 +58,7 @@ export class MatchRoom extends Room<MatchState> {
     this.state.phase = "waiting";
 
     this.physics = await PhysicsWorld.create(PHYS.gravity, 1 / TICK_RATE);
-    this.buildArena();
+    this.setPlatformEnabled(true);
 
     this.ctx = {
       physics: this.physics,
@@ -65,6 +67,8 @@ export class MatchRoom extends Room<MatchState> {
       aliveIds: () => [...this.sims.keys()],
       eliminate: (id, reason) => this.eliminate(id, reason),
       botTarget: (id) => this.minigame?.botTarget?.(id, this.ctx) ?? { x: 0, z: 0 },
+      setPlatformEnabled: (enabled) => this.setPlatformEnabled(enabled),
+      survivorsTarget: () => this.survivorsTarget,
     };
 
     this.onMessage(INPUT_MESSAGE, (client, message: InputIntent) => {
@@ -142,7 +146,6 @@ export class MatchRoom extends Room<MatchState> {
 
     for (const [id, sim] of this.sims) {
       sim.postStep();
-      this.resolveBumpers(sim);
       if (allowRespawn && sim.fellOff) sim.respawn();
 
       const player = this.state.players.get(id);
@@ -181,6 +184,7 @@ export class MatchRoom extends Room<MatchState> {
   private updatePlaying(dt: number): void {
     if (!this.minigame) return;
     this.roundElapsed += dt;
+    this.state.roundClock = this.roundElapsed;
     this.minigame.update(this.ctx, dt);
     this.state.alive = this.sims.size;
     this.state.timer = Math.max(0, Math.ceil(this.minigame.maxDuration - this.roundElapsed));
@@ -213,9 +217,15 @@ export class MatchRoom extends Room<MatchState> {
     this.minigame?.teardown(this.ctx);
     this.minigame = createMinigame(this.roundIndex);
     this.roundElapsed = 0;
+    this.state.roundClock = 0;
+    // Eliminate one player per round so the match ladders down to a single winner.
+    this.survivorsTarget = Math.max(1, this.sims.size - 1);
     this.state.round = this.roundIndex + 1;
     this.minigame.setup(this.ctx);
-    console.log(`[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name}`);
+    console.log(
+      `[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name} ` +
+        `(survivors target ${this.survivorsTarget})`,
+    );
   }
 
   private nextRound(): void {
@@ -282,37 +292,19 @@ export class MatchRoom extends Room<MatchState> {
     this.bots.delete(id);
   }
 
-  private resolveBumpers(sim: PlayerSim): void {
-    if (sim.bumperCooldown > 0) return;
-    const p = sim.position;
-    for (const b of ARENA.bumpers) {
-      const dx = p.x - b.x;
-      const dz = p.z - b.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist <= b.radius + PHYS.capsuleRadius + PHYS.bumperTriggerPad) {
-        const inv = dist > 1e-4 ? 1 / dist : 0;
-        sim.applyKnockback(inv === 0 ? 1 : dx * inv, inv === 0 ? 0 : dz * inv, PHYS.knockStrength);
-        return;
-      }
-    }
-  }
-
-  private buildArena(): void {
-    const world = this.physics.world;
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(
-        ARENA.platformHalf,
-        ARENA.platformThickness / 2,
-        ARENA.platformHalf,
-      ).setTranslation(0, -ARENA.platformThickness / 2, 0),
-    );
-    const bumperHeight = 1.4;
-    for (const b of ARENA.bumpers) {
-      world.createCollider(
-        RAPIER.ColliderDesc.cylinder(bumperHeight / 2, b.radius)
-          .setTranslation(b.x, bumperHeight / 2, b.z)
-          .setRestitution(0.3),
+  /** Add or remove the solid base platform collider (Hex Fall removes it). */
+  private setPlatformEnabled(enabled: boolean): void {
+    if (enabled && !this.platformCollider) {
+      this.platformCollider = this.physics.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(
+          ARENA.platformHalf,
+          ARENA.platformThickness / 2,
+          ARENA.platformHalf,
+        ).setTranslation(0, -ARENA.platformThickness / 2, 0),
       );
+    } else if (!enabled && this.platformCollider) {
+      this.physics.world.removeCollider(this.platformCollider, false);
+      this.platformCollider = null;
     }
   }
 }

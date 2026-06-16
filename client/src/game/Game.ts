@@ -8,6 +8,7 @@ import { Input } from "../core/Input";
 import { NetClient, defaultServerUrl } from "../net/NetClient";
 import { createScene } from "./Scene";
 import { SafeZone } from "./SafeZone";
+import { MinigameViews } from "./MinigameViews";
 import { Avatar } from "./Avatar";
 import { loadCharacterGltf } from "./characterModel";
 import { gameStore } from "./store";
@@ -15,6 +16,13 @@ import { gameStore } from "./store";
 const UP = new THREE.Vector3(0, 1, 0);
 const CENTER = new THREE.Vector3(0, 1, 0);
 const SEND_INTERVAL = 1 / 30;
+
+/** Minimal shape of synced match state read directly each frame for rendering. */
+interface MatchStateView {
+  minigame: string;
+  roundClock: number;
+  tiles: ArrayLike<boolean>;
+}
 
 /** Minimal shape of a synced player, for reading authoritative state. */
 interface NetPlayer {
@@ -44,6 +52,7 @@ export class Game {
   private readonly loop: GameLoop;
   private readonly net = new NetClient();
   private readonly zone = new SafeZone();
+  private readonly minigameViews: MinigameViews;
 
   private readonly avatars = new Map<string, Avatar>();
   private gltf: Awaited<ReturnType<typeof loadCharacterGltf>> = null;
@@ -62,8 +71,10 @@ export class Game {
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
-    this.scene = createScene();
+    const built = createScene();
+    this.scene = built.scene;
     this.scene.add(this.zone.object3d);
+    this.minigameViews = new MinigameViews(built.scene, built.platform, built.grid);
     this.cameraRig = new CameraRig(canvas, this.aspect());
     this.renderer.setSize(this.width(), this.height());
     this.loop = new GameLoop(this.onFrame);
@@ -171,6 +182,12 @@ export class Game {
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
     this.zone.setRadius(this.zoneRadius);
+
+    const st = this.net.room?.state as unknown as MatchStateView | undefined;
+    if (st) {
+      this.minigameViews.setMinigame(typeof st.minigame === "string" ? st.minigame : "");
+      this.minigameViews.update(typeof st.roundClock === "number" ? st.roundClock : 0, st.tiles);
+    }
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
     this.cameraRig.follow(local && this.localAlive ? local.position : CENTER);

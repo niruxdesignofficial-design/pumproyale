@@ -1,4 +1,4 @@
-import { Schema, MapSchema, defineTypes } from "@colyseus/schema";
+import { Schema, MapSchema, ArraySchema, defineTypes } from "@colyseus/schema";
 
 /**
  * Authoritative per-player state synced to clients. Position/yaw/anim are written
@@ -48,6 +48,10 @@ export class MatchState extends Schema {
   alive = 0;
   /** Survival safe-zone radius (0 when not in use). */
   zoneRadius = 0;
+  /** Seconds since the current round started; drives deterministic obstacles. */
+  roundClock = 0;
+  /** Hex Fall tile liveness (true = present). Empty outside Hex Fall. */
+  tiles = new ArraySchema<boolean>();
   winnerId = "";
   winnerName = "";
 }
@@ -60,6 +64,8 @@ defineTypes(MatchState, {
   timer: "number",
   alive: "number",
   zoneRadius: "number",
+  roundClock: "number",
+  tiles: ["boolean"],
   winnerId: "string",
   winnerName: "string",
 });

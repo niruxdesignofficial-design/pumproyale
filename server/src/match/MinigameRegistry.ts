@@ -1,14 +1,17 @@
 import type { IMinigame } from "./IMinigame";
+import { ObstacleRaceMinigame } from "./minigames/ObstacleRaceMinigame";
+import { HexFallMinigame } from "./minigames/HexFallMinigame";
 import { SurvivalMinigame } from "./minigames/SurvivalMinigame";
 
 /**
- * Registry of available minigames. Adding a new minigame to rotation is a single
- * line here (plus its implementation file). Phase 5 adds Obstacle Race and Hex
- * Fall alongside Survival.
+ * Registry of available minigames, in round rotation order. A match plays them
+ * in sequence (race, then hex, then survival as the decider), wrapping around if
+ * more rounds are needed. Adding a minigame is a single line here.
  */
 const FACTORIES: Array<() => IMinigame> = [
+  () => new ObstacleRaceMinigame(),
+  () => new HexFallMinigame(),
   () => new SurvivalMinigame(),
-  // Phase 5: () => new ObstacleRaceMinigame(), () => new HexFallMinigame(),
 ];
 
 export function minigameCount(): number {

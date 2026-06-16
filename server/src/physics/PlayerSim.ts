@@ -36,6 +36,10 @@ export class PlayerSim {
   private faceZ = 1;
   yaw = 0;
 
+  /** External per-tick push (e.g. conveyor belts), reset each tick by the minigame. */
+  private extX = 0;
+  private extZ = 0;
+
   /** True once the player has fallen off (used by elimination logic in Phase 4). */
   fellOff = false;
 
@@ -101,7 +105,7 @@ export class PlayerSim {
         nx = v.x + (desiredX - v.x) * PHYS.airControl;
         nz = v.z + (desiredZ - v.z) * PHYS.airControl;
       }
-      this.body.setLinvel({ x: nx, y: v.y, z: nz }, true);
+      this.body.setLinvel({ x: nx + this.extX, y: v.y, z: nz + this.extZ }, true);
 
       if (len > 0.0001) {
         this.faceX = dx;
@@ -135,6 +139,12 @@ export class PlayerSim {
     if (this.body.translation().y < ARENA.fallY) {
       this.fellOff = true;
     }
+  }
+
+  /** Set the external push applied next tick (conveyor belts). Reset to 0 by the minigame. */
+  setExternalPush(x: number, z: number): void {
+    this.extX = x;
+    this.extZ = z;
   }
 
   applyKnockback(dirX: number, dirZ: number, strength: number): void {

@@ -18,6 +18,10 @@ export interface MinigameContext {
   eliminate(id: string, reason: string): void;
   /** Suggested goal point a bot should head toward this round (defaults to center). */
   botTarget(id: string): { x: number; z: number };
+  /** Number of players that should survive this round (round ends at this count). */
+  survivorsTarget(): number;
+  /** Toggle the solid base platform collider (Hex Fall disables it). */
+  setPlatformEnabled(enabled: boolean): void;
 }
 
 /**
