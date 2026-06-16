@@ -2,20 +2,35 @@
 // Designed for React's useSyncExternalStore: getSnapshot returns a stable
 // reference that only changes when state actually changes.
 
-export type GamePhase = "loading" | "ready";
+export type ConnectionStatus = "connecting" | "connected" | "error";
 
 export interface GameState {
-  readonly phase: GamePhase;
+  readonly status: ConnectionStatus;
   readonly fps: number;
+  readonly playerCount: number;
   readonly usingFallback: boolean;
-  readonly characterLabel: string;
+  readonly error: string;
+  // Match flow (populated from Phase 4 onward).
+  readonly matchPhase: string;
+  readonly round: number;
+  readonly minigame: string;
+  readonly timer: number;
+  readonly alive: boolean;
+  readonly winnerName: string;
 }
 
 const INITIAL: GameState = {
-  phase: "loading",
+  status: "connecting",
   fps: 0,
+  playerCount: 0,
   usingFallback: false,
-  characterLabel: "",
+  error: "",
+  matchPhase: "",
+  round: 0,
+  minigame: "",
+  timer: 0,
+  alive: true,
+  winnerName: "",
 };
 
 class GameStore {
@@ -31,15 +46,14 @@ class GameStore {
 
   set(partial: Partial<GameState>): void {
     const next = { ...this.state, ...partial };
-    // Avoid spurious notifications (e.g. identical FPS samples).
-    if (
-      next.phase === this.state.phase &&
-      next.fps === this.state.fps &&
-      next.usingFallback === this.state.usingFallback &&
-      next.characterLabel === this.state.characterLabel
-    ) {
-      return;
+    let changed = false;
+    for (const k of Object.keys(next) as (keyof GameState)[]) {
+      if (next[k] !== this.state[k]) {
+        changed = true;
+        break;
+      }
     }
+    if (!changed) return;
     this.state = next;
     for (const l of this.listeners) l();
   }

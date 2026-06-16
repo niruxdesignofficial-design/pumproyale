@@ -1,25 +1,30 @@
 // Client <-> server message contracts.
-// Phase 1 placeholder: the real input/state messages are defined in Phase 3
-// when the authoritative Colyseus room is introduced. Kept minimal so the
-// package compiles and consumers can start importing the namespace early.
+//
+// The client only ever sends INPUT INTENTS. There is deliberately no message
+// that sets a position, score, or "I won" flag: the server is authoritative and
+// derives all of that from the simulation. This is what makes lying impossible.
 
-/** Input intent the client will send to the server (server-authoritative). */
+/** Colyseus room name for a match. */
+export const MATCH_ROOM = "match";
+
+/** Message type the client sends each frame with its sampled input. */
+export const INPUT_MESSAGE = "input";
+
+/** Input intent the client sends to the server. moveX/moveZ are a world-space,
+ * camera-relative direction computed on the client (the server has no camera). */
 export interface InputIntent {
-  /** Movement axis, camera-relative, each component in [-1, 1]. */
   moveX: number;
   moveZ: number;
+  run: boolean;
   jump: boolean;
   dive: boolean;
-  /** Client tick the input was sampled on, for reconciliation. */
+  /** Client input sequence number, for optional reconciliation. */
   seq: number;
 }
 
-/** Authoritative transform broadcast for a single player. */
-export interface PlayerTransform {
-  id: string;
-  x: number;
-  y: number;
-  z: number;
-  /** Facing yaw in radians. */
-  yaw: number;
+/** Options sent on joining a room. */
+export interface JoinOptions {
+  name?: string;
+  /** Verified wallet public key (set from Phase 6 onward). */
+  wallet?: string;
 }

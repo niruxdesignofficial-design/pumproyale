@@ -9,6 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@colyseus/core": "^0.16.0",
+    "@colyseus/schema": "^3.0.0",
+    "@colyseus/ws-transport": "^0.16.0",
+    "@dimforge/rapier3d-compat": "^0.14.0",
     "@party-royale/shared": "workspace:*"
   },
   "devDependencies": {

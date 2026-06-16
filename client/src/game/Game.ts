@@ -1,41 +1,57 @@
 import * as THREE from "three";
-import RAPIER from "@dimforge/rapier3d-compat";
+import { getStateCallbacks, type Room } from "colyseus.js";
+import { MAX_PLAYERS, type AnimationState, type InputIntent } from "@party-royale/shared";
 import { Renderer } from "../core/Renderer";
 import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
-import { PhysicsWorld } from "../physics/PhysicsWorld";
-import { createScene, PLATFORM_HALF, PLATFORM_THICKNESS } from "./Scene";
-import { Character } from "./Character";
-import { CharacterController } from "./CharacterController";
-import { Bumper } from "./obstacles/Bumper";
+import { NetClient, defaultServerUrl } from "../net/NetClient";
+import { createScene } from "./Scene";
+import { Avatar } from "./Avatar";
+import { loadCharacterGltf } from "./characterModel";
 import { gameStore } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
-const SPAWN = new THREE.Vector3(0, 2, 0);
+const SEND_INTERVAL = 1 / 30;
+
+/** Minimal shape of a synced player, for reading authoritative state. */
+interface NetPlayer {
+  name: string;
+  wallet: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  anim: string;
+  alive: boolean;
+  isBot: boolean;
+  placement: number;
+}
 
 /**
- * Phase 2 game orchestrator: a single-player physics sandbox. Owns the renderer,
- * scene, follow camera, Rapier world, the capsule character controller, and a
- * greybox bumper. The render loop samples input, steps physics at a fixed rate,
- * then syncs visuals.
+ * Networked game client. Connects to the authoritative Colyseus match room,
+ * renders an Avatar per player interpolated toward server transforms, samples
+ * local input and sends it as intents, and follows the local player with the
+ * camera. It holds no authoritative state of its own.
  */
 export class Game {
   private readonly renderer: Renderer;
   private readonly scene: THREE.Scene;
   private readonly cameraRig: CameraRig;
-  private readonly character = new Character();
   private readonly input = new Input();
   private readonly loop: GameLoop;
+  private readonly net = new NetClient();
 
-  private physics: PhysicsWorld | null = null;
-  private controller: CharacterController | null = null;
-  private readonly bumpers: Bumper[] = [];
+  private readonly avatars = new Map<string, Avatar>();
+  private gltf: Awaited<ReturnType<typeof loadCharacterGltf>> = null;
+  private localId: string | null = null;
+  private cameraSnapped = false;
 
   private disposed = false;
-  private fpsPublishAccum = 0;
+  private seq = 0;
+  private sendAccum = 0;
+  private fpsAccum = 0;
 
-  // Scratch vectors reused each frame.
   private readonly forward = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
 
@@ -49,37 +65,31 @@ export class Game {
   }
 
   async start(): Promise<void> {
-    const result = await this.character.load();
-    if (this.disposed) return;
-    this.scene.add(this.character.object3d);
-
-    this.physics = await PhysicsWorld.create();
+    this.gltf = await loadCharacterGltf();
     if (this.disposed) return;
 
-    // Static platform collider, aligned with the visual platform (top at y=0).
-    this.physics.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(
-        PLATFORM_HALF,
-        PLATFORM_THICKNESS / 2,
-        PLATFORM_HALF,
-      ).setTranslation(0, -PLATFORM_THICKNESS / 2, 0),
-    );
+    let room: Room;
+    try {
+      room = await this.net.connect(defaultServerUrl(), { name: randomName() });
+    } catch (err) {
+      console.error("[net] connection failed", err);
+      gameStore.set({ status: "error", error: "Could not reach the game server." });
+      return;
+    }
+    if (this.disposed) {
+      void this.net.dispose();
+      return;
+    }
 
-    this.controller = new CharacterController(this.physics, this.character, SPAWN);
-
-    const bumper = new Bumper(this.physics, new THREE.Vector3(3.5, 0, 0), 1);
-    this.scene.add(bumper.mesh);
-    this.bumpers.push(bumper);
+    this.localId = room.sessionId;
+    this.wireRoom(room);
 
     this.input.attach();
-    this.cameraRig.snapTo(this.controller.position);
-
     gameStore.set({
-      phase: "ready",
-      usingFallback: result.usingFallback,
-      characterLabel: result.label,
+      status: "connected",
+      usingFallback: this.gltf === null,
+      matchPhase: readString(room.state, "phase"),
     });
-
     this.loop.start();
   }
 
@@ -88,50 +98,94 @@ export class Game {
     this.loop.stop();
     window.removeEventListener("resize", this.onResize);
     this.input.detach();
+    void this.net.dispose();
+    for (const avatar of this.avatars.values()) avatar.dispose();
+    this.avatars.clear();
     this.cameraRig.dispose();
-    this.character.dispose();
-    this.physics?.dispose();
     this.renderer.dispose();
     gameStore.reset();
   }
 
+  private wireRoom(room: Room): void {
+    const $ = getStateCallbacks(room);
+
+    $(room.state).players?.onAdd((player: NetPlayer, sessionId: string) => {
+      const avatar = new Avatar(this.gltf, colorForId(sessionId));
+      avatar.setTarget(player.x, player.y, player.z, player.yaw);
+      avatar.setAnim(asAnim(player.anim));
+      this.scene.add(avatar.object3d);
+      this.avatars.set(sessionId, avatar);
+      this.publishPlayerCount();
+
+      if (sessionId === this.localId && !this.cameraSnapped) {
+        this.cameraRig.snapTo(avatar.position);
+        this.cameraSnapped = true;
+      }
+
+      $(player).onChange(() => {
+        avatar.setTarget(player.x, player.y, player.z, player.yaw);
+        avatar.setAnim(asAnim(player.anim));
+      });
+    });
+
+    $(room.state).players?.onRemove((_player: NetPlayer, sessionId: string) => {
+      const avatar = this.avatars.get(sessionId);
+      if (avatar) {
+        this.scene.remove(avatar.object3d);
+        avatar.dispose();
+        this.avatars.delete(sessionId);
+      }
+      this.publishPlayerCount();
+    });
+
+    $(room.state).listen?.("phase", (value: string) => gameStore.set({ matchPhase: value }));
+
+    room.onLeave(() => {
+      if (!this.disposed) gameStore.set({ status: "error", error: "Disconnected from server." });
+    });
+  }
+
   private readonly onFrame = (dt: number): void => {
-    if (this.controller && this.physics) {
-      this.controller.setInput(this.sampleInput());
-      this.physics.step(dt, () => this.controller?.fixedUpdate());
-      this.controller.update(dt);
-      for (const bumper of this.bumpers) bumper.update(dt, this.controller);
-      this.cameraRig.follow(this.controller.position);
+    // Send input to the server at a fixed rate.
+    this.sendAccum += dt;
+    if (this.sendAccum >= SEND_INTERVAL && this.net.room) {
+      this.sendAccum = 0;
+      this.net.sendInput(this.sampleInput());
     }
 
+    for (const avatar of this.avatars.values()) avatar.update(dt);
+
+    const local = this.localId ? this.avatars.get(this.localId) : undefined;
+    if (local) this.cameraRig.follow(local.position);
     this.cameraRig.update();
     this.renderer.render(this.scene, this.cameraRig.camera);
 
-    this.fpsPublishAccum += dt;
-    if (this.fpsPublishAccum >= 0.25) {
-      this.fpsPublishAccum = 0;
+    this.fpsAccum += dt;
+    if (this.fpsAccum >= 0.25) {
+      this.fpsAccum = 0;
       gameStore.set({ fps: this.loop.getFps() });
     }
   };
 
-  /** Build a camera-relative move direction from the current key state. */
-  private sampleInput() {
+  private sampleInput(): InputIntent {
     const f = (this.input.isActive("forward") ? 1 : 0) - (this.input.isActive("back") ? 1 : 0);
     const r = (this.input.isActive("right") ? 1 : 0) - (this.input.isActive("left") ? 1 : 0);
 
     this.cameraRig.getForward(this.forward);
     this.right.crossVectors(this.forward, UP).normalize();
 
-    const moveX = this.forward.x * f + this.right.x * r;
-    const moveZ = this.forward.z * f + this.right.z * r;
-
     return {
-      moveX,
-      moveZ,
+      moveX: this.forward.x * f + this.right.x * r,
+      moveZ: this.forward.z * f + this.right.z * r,
       run: this.input.isActive("run"),
       jump: this.input.isActive("jump"),
       dive: this.input.isActive("dive"),
+      seq: this.seq++,
     };
+  }
+
+  private publishPlayerCount(): void {
+    gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
   }
 
   private readonly onResize = (): void => {
@@ -150,4 +204,27 @@ export class Game {
   private aspect(): number {
     return this.width() / this.height();
   }
+}
+
+const ANIM_STATES = new Set(["idle", "run", "jump", "fall", "dive", "hit", "win", "lose"]);
+function asAnim(value: string): AnimationState {
+  return (ANIM_STATES.has(value) ? value : "idle") as AnimationState;
+}
+
+function readString(state: unknown, key: string): string {
+  const v = (state as Record<string, unknown>)?.[key];
+  return typeof v === "string" ? v : "";
+}
+
+function colorForId(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  const hue = (hash % 360) / 360;
+  return new THREE.Color().setHSL(hue, 0.65, 0.55).getHex();
+}
+
+function randomName(): string {
+  const animals = ["Fox", "Bear", "Duck", "Wolf", "Cat", "Owl", "Frog", "Hare"];
+  const animal = animals[Math.floor(Math.random() * animals.length)];
+  return `${animal}-${Math.floor(Math.random() * 100)}`;
 }

@@ -12,6 +12,7 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
     "@party-royale/shared": "workspace:*",
+    "colyseus.js": "^0.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.171.0"

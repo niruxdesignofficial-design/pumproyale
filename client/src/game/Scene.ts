@@ -1,18 +1,13 @@
 import * as THREE from "three";
+import { ARENA } from "@party-royale/shared";
 
-/** Half-extent of the square play platform (world units). Edges at +/-this. */
-export const PLATFORM_HALF = 12;
-
-/** Platform slab thickness; its top surface sits at y = 0. */
-export const PLATFORM_THICKNESS = 1;
+const BUMPER_HEIGHT = 1.4;
 
 /**
- * Builds the static environment: lighting, a finite play platform (so the
- * player can fall off the edge), a reference grid, and fog. The platform is
- * finite by design - Phase 2 acceptance includes falling off the edge.
- *
- * The visual platform is sized from PLATFORM_HALF / PLATFORM_THICKNESS so the
- * Rapier collider built in Game.ts lines up exactly.
+ * Builds the static environment from the shared ARENA definition: lighting, the
+ * finite platform, a reference grid, the bumper visuals, and fog. The colliders
+ * for these live on the server (authoritative); the client only renders them, so
+ * client and server geometry stay aligned through the same ARENA constants.
  */
 export function createScene(): THREE.Scene {
   const scene = new THREE.Scene();
@@ -36,29 +31,40 @@ export function createScene(): THREE.Scene {
   sun.shadow.bias = -0.0004;
   scene.add(sun);
 
-  // Finite platform slab. Top surface at y = 0.
-  const size = PLATFORM_HALF * 2;
-  const platformMat = new THREE.MeshStandardMaterial({
-    color: 0x3a4a5a,
-    roughness: 0.95,
-    metalness: 0.0,
-  });
+  // Finite platform slab (top surface at y = 0).
+  const size = ARENA.platformHalf * 2;
   const platform = new THREE.Mesh(
-    new THREE.BoxGeometry(size, PLATFORM_THICKNESS, size),
-    platformMat,
+    new THREE.BoxGeometry(size, ARENA.platformThickness, size),
+    new THREE.MeshStandardMaterial({ color: 0x3a4a5a, roughness: 0.95 }),
   );
-  platform.position.y = -PLATFORM_THICKNESS / 2;
+  platform.position.y = -ARENA.platformThickness / 2;
   platform.receiveShadow = true;
   platform.castShadow = true;
   scene.add(platform);
 
-  // Grid on the platform surface for spatial reference.
   const grid = new THREE.GridHelper(size, size, 0x55617a, 0x2a3344);
   grid.position.y = 0.01;
   const gridMat = grid.material as THREE.Material;
   gridMat.transparent = true;
   gridMat.opacity = 0.35;
   scene.add(grid);
+
+  // Bumper visuals.
+  const bumperMat = new THREE.MeshStandardMaterial({
+    color: 0xff5d73,
+    roughness: 0.5,
+    emissive: 0x220008,
+  });
+  for (const b of ARENA.bumpers) {
+    const bumper = new THREE.Mesh(
+      new THREE.CylinderGeometry(b.radius, b.radius, BUMPER_HEIGHT, 24),
+      bumperMat,
+    );
+    bumper.position.set(b.x, BUMPER_HEIGHT / 2, b.z);
+    bumper.castShadow = true;
+    bumper.receiveShadow = true;
+    scene.add(bumper);
+  }
 
   return scene;
 }
