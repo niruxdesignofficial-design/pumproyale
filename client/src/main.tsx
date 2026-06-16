@@ -1,6 +1,11 @@
+import { Buffer } from "buffer";
 import { createRoot } from "react-dom/client";
 import { App } from "./ui/App";
 import "./ui/styles.css";
+
+// @solana/web3.js relies on a global Buffer in the browser.
+const globalScope = globalThis as unknown as { Buffer?: typeof Buffer };
+if (!globalScope.Buffer) globalScope.Buffer = Buffer;
 
 // Note: React StrictMode is intentionally not used here. In development it would
 // mount/unmount/remount the App, which creates and tears down two WebGL contexts

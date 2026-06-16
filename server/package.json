@@ -13,7 +13,12 @@
     "@colyseus/schema": "^3.0.0",
     "@colyseus/ws-transport": "^0.16.0",
     "@dimforge/rapier3d-compat": "^0.14.0",
-    "@party-royale/shared": "workspace:*"
+    "@fastify/cors": "^9.0.1",
+    "@party-royale/shared": "workspace:*",
+    "@solana/web3.js": "^1.95.3",
+    "bs58": "^6.0.0",
+    "fastify": "^4.28.1",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",

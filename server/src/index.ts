@@ -5,23 +5,29 @@
 // in Phases 6 and 7.
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { DEFAULT_SERVER_PORT, MATCH_ROOM, TICK_RATE } from "@party-royale/shared";
+import {
+  DEFAULT_API_PORT,
+  DEFAULT_SERVER_PORT,
+  MATCH_ROOM,
+  TICK_RATE,
+} from "@party-royale/shared";
 import { MatchRoom } from "./rooms/MatchRoom";
+import { startApiServer } from "./api/server";
 
-const port = Number(process.env.SERVER_PORT ?? DEFAULT_SERVER_PORT);
+const gamePort = Number(process.env.SERVER_PORT ?? DEFAULT_SERVER_PORT);
+const apiPort = Number(process.env.API_PORT ?? DEFAULT_API_PORT);
 
-const gameServer = new Server({
-  transport: new WebSocketTransport(),
+async function main(): Promise<void> {
+  const gameServer = new Server({ transport: new WebSocketTransport() });
+  gameServer.define(MATCH_ROOM, MatchRoom);
+  await gameServer.listen(gamePort);
+  console.log(`[server] Colyseus listening on ws://localhost:${gamePort} (tick ${TICK_RATE}Hz)`);
+
+  await startApiServer(apiPort);
+  console.log(`[server] REST API listening on http://localhost:${apiPort}`);
+}
+
+main().catch((err: unknown) => {
+  console.error("[server] failed to start:", err);
+  process.exit(1);
 });
-
-gameServer.define(MATCH_ROOM, MatchRoom);
-
-gameServer
-  .listen(port)
-  .then(() => {
-    console.log(`[server] Colyseus listening on ws://localhost:${port} (tick ${TICK_RATE}Hz)`);
-  })
-  .catch((err: unknown) => {
-    console.error("[server] failed to start:", err);
-    process.exit(1);
-  });

@@ -150,6 +150,58 @@ body,
   font-size: 14px;
 }
 
+.wallet-panel {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.wallet-signin {
+  background: var(--accent);
+  color: #08111f;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wallet-signin:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wallet-badge {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.wallet-ok {
+  color: #7ef0a0;
+}
+
+.wallet-err {
+  color: #ff8a8a;
+  max-width: 280px;
+}
+
+.wallet-net {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .hud-center-big {
   position: absolute;
   inset: 0;

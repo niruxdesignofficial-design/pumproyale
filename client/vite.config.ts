@@ -5,6 +5,10 @@ import react from "@vitejs/plugin-react";
 // alias is needed: pnpm symlinks it into node_modules and Vite transpiles it.
 export default defineConfig({
   plugins: [react()],
+  // @solana/web3.js and the wallet adapters expect a Node-style global.
+  define: {
+    global: "globalThis",
+  },
   server: {
     port: 5173,
     host: true,

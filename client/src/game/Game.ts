@@ -6,6 +6,7 @@ import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { NetClient, defaultServerUrl } from "../net/NetClient";
+import { getAuthWallet } from "../solana/auth";
 import { createScene } from "./Scene";
 import { SafeZone } from "./SafeZone";
 import { MinigameViews } from "./MinigameViews";
@@ -87,7 +88,8 @@ export class Game {
 
     let room: Room;
     try {
-      room = await this.net.connect(defaultServerUrl(), { name: randomName() });
+      const wallet = getAuthWallet() ?? undefined;
+      room = await this.net.connect(defaultServerUrl(), { name: randomName(), wallet });
     } catch (err) {
       console.error("[net] connection failed", err);
       gameStore.set({ status: "error", error: "Could not reach the game server." });
