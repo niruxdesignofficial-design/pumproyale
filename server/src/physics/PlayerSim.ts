@@ -20,7 +20,15 @@ export class PlayerSim {
   readonly body: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
 
-  private input: InputIntent = { moveX: 0, moveZ: 0, run: false, jump: false, dive: false, seq: 0 };
+  private input: InputIntent = {
+    moveX: 0,
+    moveZ: 0,
+    run: false,
+    jump: false,
+    dive: false,
+    action: false,
+    seq: 0,
+  };
   private prevJump = false;
   private prevDive = false;
   private jumpQueued = false;

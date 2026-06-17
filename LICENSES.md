@@ -9,11 +9,9 @@ used anywhere in this project.
 | Pack                              | License | Used for | Source |
 | --------------------------------- | ------- | -------- | ------ |
 | KayKit Adventurers                | CC0     | Playable characters (Knight, Barbarian, Mage, Rogue, Ranger) + shared Rig_Medium animations | https://kaylousberg.itch.io/kaykit-adventurers |
-| KayKit Platformer Pack            | CC0     | Minigame maps (floors, platforms, springs, beams, finish gates, flags) | https://kaylousberg.itch.io/kaykit-platformer |
-| KayKit Mini-Game Variety Pack 1.2 | CC0     | Props (crown/star, decoration) | https://kaylousberg.itch.io/kay-kit-mini-game-variety-pack |
-| KayKit Character Animations 1.2   | CC0     | Fallback character (PrototypePete) | https://kaylousberg.itch.io/kaykit-animations |
+| KayKit Mini-Game Variety Pack 1.2 | CC0     | All minigame maps + props: tiles, goals, balls, targets, gems, barriers, flags, decoration | https://kaylousberg.itch.io/kay-kit-mini-game-variety-pack |
 
-All four packs are CC0 and live (gitignored) in `assets-source/`. `pnpm
+Both packs are CC0 and live (gitignored) in `assets-source/`. `pnpm
 assets:prepare` copies only the files the game needs into `client/public/assets/`.
 
 ## Notes

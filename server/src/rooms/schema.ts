@@ -15,10 +15,14 @@ export class PlayerState extends Schema {
   yaw = 0;
   anim = "idle";
   alive = true;
-  /** Bot players are filled in to reach the match size (Phase 4). */
+  /** Bot players are filled in to reach the match size. */
   isBot = false;
-  /** Finishing rank, 0 while still in the match (Phase 4). */
+  /** Final match placement by total points (0 until the match ends). */
   placement = 0;
+  /** Total points across all minigames played so far. */
+  points = 0;
+  /** Raw score in the current minigame (goals / hits / gems / climb rank). */
+  roundScore = 0;
 }
 
 defineTypes(PlayerState, {
@@ -34,28 +38,56 @@ defineTypes(PlayerState, {
   alive: "boolean",
   isBot: "boolean",
   placement: "number",
+  points: "number",
+  roundScore: "number",
 });
 
 /**
- * Top-level match state.
- * `phase` and `round` drive the Phase 4 match flow; in Phase 3 the match simply
- * stays in "playing".
+ * A dynamic minigame object the client renders at server-authoritative
+ * transforms: the soccer ball, shooting targets, collectible gems. The active
+ * minigame owns this list; it is cleared between rounds.
+ */
+export class EntityState extends Schema {
+  kind = "";
+  x = 0;
+  y = 0;
+  z = 0;
+  yaw = 0;
+  active = true;
+  /** Visual variant index (e.g. which gem model / team color). */
+  variant = 0;
+}
+
+defineTypes(EntityState, {
+  kind: "string",
+  x: "number",
+  y: "number",
+  z: "number",
+  yaw: "number",
+  active: "boolean",
+  variant: "number",
+});
+
+/**
+ * Top-level match state. The match plays every minigame in order; players
+ * accumulate points and the highest total wins (no elimination).
  */
 export class MatchState extends Schema {
   players = new MapSchema<PlayerState>();
   phase = "waiting";
+  /** Current round (1-based) while playing. */
   round = 0;
+  /** Total rounds in the match. */
+  roundCount = 0;
   minigame = "";
   /** Seconds remaining in the current phase, for the HUD. */
   timer = 0;
-  /** Number of players still in the match. */
+  /** Players in the match (humans + bots). */
   alive = 0;
-  /** Survival safe-zone radius (0 when not in use). */
-  zoneRadius = 0;
-  /** Seconds since the current round started; drives deterministic obstacles. */
+  /** Seconds since the current round started; drives deterministic visuals. */
   roundClock = 0;
-  /** Hex Fall tile liveness (true = present). Empty outside Hex Fall. */
-  tiles = new ArraySchema<boolean>();
+  /** Dynamic objects for the active minigame (ball / targets / gems). */
+  entities = new ArraySchema<EntityState>();
   winnerId = "";
   winnerName = "";
 }
@@ -64,12 +96,12 @@ defineTypes(MatchState, {
   players: { map: PlayerState },
   phase: "string",
   round: "number",
+  roundCount: "number",
   minigame: "string",
   timer: "number",
   alive: "number",
-  zoneRadius: "number",
   roundClock: "number",
-  tiles: ["boolean"],
+  entities: [EntityState],
   winnerId: "string",
   winnerName: "string",
 });

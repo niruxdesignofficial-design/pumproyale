@@ -1,28 +1,22 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import type { GameMap } from "@party-royale/shared";
+import type { MinigameMap } from "@party-royale/shared";
 import type { PhysicsWorld } from "../physics/PhysicsWorld";
 
 /**
- * Build static colliders for a map's box elements (floors, platforms, walls).
- * Sweepers, springs, finish, and crown are resolved in minigame update logic,
- * not as colliders. Returns the handles so the minigame can remove them.
+ * Build static colliders for a minigame map (floors, walls, platforms). Goal
+ * zones and pickups are resolved in minigame update logic, not as colliders.
+ * Returns the handles so the minigame can remove them in teardown.
  */
-export function buildMapColliders(physics: PhysicsWorld, map: GameMap): RAPIER.Collider[] {
+export function buildMapColliders(physics: PhysicsWorld, map: MinigameMap): RAPIER.Collider[] {
   const world = physics.world;
-  const colliders = map.boxes.map((b) =>
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(b.w / 2, b.h / 2, b.d / 2).setTranslation(b.cx, b.cy, b.cz),
-    ),
-  );
-  // Bumpers are solid (and bounce via the minigame knockback).
-  for (const bm of map.bumpers) {
-    colliders.push(
-      world.createCollider(
-        RAPIER.ColliderDesc.cylinder(0.75, bm.radius).setTranslation(bm.x, 0.75, bm.z),
-      ),
-    );
-  }
-  return colliders;
+  return map.colliders.map((c) => {
+    const desc = RAPIER.ColliderDesc.cuboid(c.hx, c.hy, c.hz).setTranslation(c.x, c.y, c.z);
+    if (c.yaw) {
+      const h = c.yaw / 2;
+      desc.setRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) });
+    }
+    return world.createCollider(desc);
+  });
 }
 
 export function removeColliders(physics: PhysicsWorld, colliders: RAPIER.Collider[]): void {

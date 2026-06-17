@@ -18,6 +18,8 @@ export interface InputIntent {
   run: boolean;
   jump: boolean;
   dive: boolean;
+  /** Context action button (kick the ball / shoot a target). Edge-detected server-side. */
+  action: boolean;
   /** Client input sequence number, for optional reconciliation. */
   seq: number;
 }

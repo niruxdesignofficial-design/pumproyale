@@ -4,12 +4,11 @@
 // or ASSETS_SOURCE) into client/public/assets, using deterministic paths that
 // match the client asset manifests.
 //
-// Three kinds of copy:
-//  - single GLB files (characters, animation rigs, the crown prop): self-contained
-//    GLBs, copied by filename.
-//  - whole platformer folders (.gltf + .bin + shared texture): copied as a unit so
-//    the GLTF external references resolve.
-//  - the legacy PrototypePete animated character, kept as a fallback.
+// Two kinds of copy:
+//  - single GLB files (the rigged Adventurer characters + shared animation rigs):
+//    self-contained GLBs, copied by filename.
+//  - the whole Mini-Game Variety Pack gltf folder (all props are self-contained
+//    .glb): copied as a unit into assets/variety, referenced by basename.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -39,20 +38,17 @@ const FILE_TARGETS = [
     required: true,
     match: (n) => n === "rig_medium_general.glb",
   },
-  // Crown / trophy prop (Mini-Game Variety star).
-  { out: "props/star.glb", required: false, match: (n) => n === "star.gltf.glb" },
-  // Legacy fallback character.
-  {
-    out: "characters/animated-character.glb",
-    required: false,
-    match: (n) => n.endsWith(".glb") && n.includes("animatedcharacter"),
-  },
 ];
 
-/** Whole platformer color folders (.gltf + .bin + texture), matched by path suffix. */
+/**
+ * Whole prop folders copied as a unit, matched by path suffix.
+ * The Mini-Game Variety Pack ships every prop as a self-contained .glb, so the
+ * entire gltf folder is copied into assets/variety and referenced by basename.
+ * These are the ONLY game-content assets (balls, goals, targets, tiles, gems,
+ * weapons, hazards, decor); the animated Adventurers above are the players.
+ */
 const FOLDER_TARGETS = [
-  { suffix: path.join("gltf", "neutral"), out: "platformer/neutral" },
-  { suffix: path.join("gltf", "blue"), out: "platformer/blue" },
+  { suffix: path.join("Mini-Game Variety Pack 1.2", "Models", "gltf"), out: "variety" },
 ];
 
 async function walkFiles(dir) {

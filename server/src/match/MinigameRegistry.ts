@@ -1,11 +1,18 @@
 import type { IMinigame } from "./IMinigame";
-import { BeamRunMinigame } from "./minigames/BeamRunMinigame";
-import { HexFallMinigame } from "./minigames/HexFallMinigame";
+import { FootballMinigame } from "./minigames/FootballMinigame";
+import { ShootingMinigame } from "./minigames/ShootingMinigame";
+import { ClimbMinigame } from "./minigames/ClimbMinigame";
+import { GemsMinigame } from "./minigames/GemsMinigame";
 
 /**
- * Round sequence for a match: a wide bright race (qualifier) then Hex-A-Gone as
- * the final, last-one-standing decider. Two clear, readable Fall-Guys rounds.
+ * The match plays all four minigames in order. Everyone plays every round;
+ * points accumulate and the highest total wins (no elimination).
  */
 export function buildRoundPlan(_playerCount: number): IMinigame[] {
-  return [new BeamRunMinigame(), new HexFallMinigame()];
+  return [
+    new FootballMinigame(),
+    new ShootingMinigame(),
+    new ClimbMinigame(),
+    new GemsMinigame(),
+  ];
 }

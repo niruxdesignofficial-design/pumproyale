@@ -4,6 +4,17 @@
 
 export type ConnectionStatus = "connecting" | "connected" | "error";
 
+/** One player's live standing, for the scoreboard. */
+export interface Standing {
+  readonly id: string;
+  readonly name: string;
+  readonly points: number;
+  readonly roundScore: number;
+  readonly colorIndex: number;
+  readonly isLocal: boolean;
+  readonly isBot: boolean;
+}
+
 export interface GameState {
   readonly status: ConnectionStatus;
   readonly fps: number;
@@ -13,9 +24,12 @@ export interface GameState {
   // Match flow.
   readonly matchPhase: string;
   readonly round: number;
+  readonly roundCount: number;
   readonly minigame: string;
   readonly timer: number;
   readonly alivePlayers: number;
+  // Scoreboard (points-based; highest total wins).
+  readonly standings: readonly Standing[];
   // Local player.
   readonly localAlive: boolean;
   readonly localPlacement: number;
@@ -31,9 +45,11 @@ const INITIAL: GameState = {
   error: "",
   matchPhase: "",
   round: 0,
+  roundCount: 0,
   minigame: "",
   timer: 0,
   alivePlayers: 0,
+  standings: [],
   localAlive: true,
   localPlacement: 0,
   isLocalWinner: false,

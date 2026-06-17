@@ -10,23 +10,34 @@ import { sound } from "../core/Sound";
 import { NetClient, defaultServerUrl } from "../net/NetClient";
 import { getAuthWallet } from "../solana/auth";
 import { createScene } from "./Scene";
-import { SafeZone } from "./SafeZone";
 import { MinigameViews } from "./MinigameViews";
 import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
+import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
-import { gameStore } from "./store";
+import { gameStore, type Standing } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
 const CENTER = new THREE.Vector3(0, 1, 0);
 const SEND_INTERVAL = 1 / 30;
+
+/** Minimal shape of a synced dynamic entity. */
+interface NetEntity {
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  active: boolean;
+  variant: number;
+}
 
 /** Minimal shape of synced match state read directly each frame for rendering. */
 interface MatchStateView {
   phase: string;
   minigame: string;
   roundClock: number;
-  tiles: ArrayLike<boolean>;
+  entities: ArrayLike<NetEntity>;
 }
 
 /** Minimal shape of a synced player, for reading authoritative state. */
@@ -43,13 +54,15 @@ interface NetPlayer {
   alive: boolean;
   isBot: boolean;
   placement: number;
+  points: number;
+  roundScore: number;
 }
 
 /**
  * Networked game client. Connects to the authoritative Colyseus match room,
  * renders an Avatar per player interpolated toward server transforms, samples
- * local input and sends it as intents, mirrors match flow into the store, and
- * follows the local player (or the arena, while spectating).
+ * local input and sends it as intents, mirrors match flow + the live scoreboard
+ * into the store, and follows the local player.
  */
 export class Game {
   private readonly renderer: Renderer;
@@ -58,15 +71,12 @@ export class Game {
   private readonly input = new Input();
   private readonly loop: GameLoop;
   private readonly net = new NetClient();
-  private readonly zone = new SafeZone();
   private readonly minigameViews: MinigameViews;
 
   private readonly avatars = new Map<string, Avatar>();
-  private readonly aliveAvatars = new Set<string>();
   private localId: string | null = null;
-  private localAlive = true;
   private cameraSnapped = false;
-  private zoneRadius = 0;
+  private standingsSig = "";
 
   private disposed = false;
   private seq = 0;
@@ -84,7 +94,6 @@ export class Game {
     const pmrem = new THREE.PMREMGenerator(this.renderer.instance);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
-    this.scene.add(this.zone.object3d);
     this.minigameViews = new MinigameViews(built.scene, built.platform, built.grid);
     this.cameraRig = new CameraRig(canvas, this.aspect());
     this.renderer.setSize(this.width(), this.height());
@@ -93,7 +102,7 @@ export class Game {
   }
 
   async start(): Promise<void> {
-    await preloadCharacters();
+    await Promise.all([preloadCharacters(), preloadVarietyProps()]);
     if (this.disposed) return;
 
     let room: Room;
@@ -147,7 +156,6 @@ export class Game {
       avatar.setAnim(asAnim(player.anim));
       this.scene.add(avatar.object3d);
       this.avatars.set(sessionId, avatar);
-      if (player.alive) this.aliveAvatars.add(sessionId);
       gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
 
       if (sessionId === this.localId && !this.cameraSnapped) {
@@ -158,12 +166,8 @@ export class Game {
       $(player).onChange(() => {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
         avatar.setAnim(asAnim(player.anim));
-        avatar.setEliminated(!player.alive);
-        if (player.alive) this.aliveAvatars.add(sessionId);
-        else this.aliveAvatars.delete(sessionId);
         if (sessionId === this.localId) {
-          this.localAlive = player.alive;
-          gameStore.set({ localAlive: player.alive, localPlacement: player.placement });
+          gameStore.set({ localPlacement: player.placement });
         }
       });
     });
@@ -175,17 +179,16 @@ export class Game {
         avatar.dispose();
         this.avatars.delete(sessionId);
       }
-      this.aliveAvatars.delete(sessionId);
       gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
     });
 
     const s = $(room.state);
     s.listen?.("phase", (v: string) => gameStore.set({ matchPhase: v }));
     s.listen?.("round", (v: number) => gameStore.set({ round: v }));
+    s.listen?.("roundCount", (v: number) => gameStore.set({ roundCount: v }));
     s.listen?.("minigame", (v: string) => gameStore.set({ minigame: v }));
     s.listen?.("timer", (v: number) => gameStore.set({ timer: v }));
     s.listen?.("alive", (v: number) => gameStore.set({ alivePlayers: v }));
-    s.listen?.("zoneRadius", (v: number) => (this.zoneRadius = v));
     s.listen?.("winnerName", (v: string) => gameStore.set({ winnerName: v }));
     s.listen?.("winnerId", (v: string) => {
       const isLocal = v.length > 0 && v === this.localId;
@@ -206,23 +209,21 @@ export class Game {
     }
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
-    this.zone.setRadius(this.zoneRadius);
 
     const st = this.net.room?.state as unknown as MatchStateView | undefined;
     if (st) {
-      // During the intro/lobby phases no minigame map should show.
       const showMap = st.phase === "playing" || st.phase === "intro";
       this.minigameViews.setMinigame(showMap && typeof st.minigame === "string" ? st.minigame : "");
-      this.minigameViews.update(dt, typeof st.roundClock === "number" ? st.roundClock : 0, st.tiles);
+      this.minigameViews.update(dt, typeof st.roundClock === "number" ? st.roundClock : 0, st.entities);
+      this.publishStandings();
     }
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
-    if (local && this.localAlive) {
+    if (local) {
       this.cameraRig.follow(local.position);
       this.cameraRig.update();
     } else {
-      // Spectating: frame a living player directly (no OrbitControls update).
-      this.cameraRig.spectate(this.followTarget(local));
+      this.cameraRig.spectate(CENTER);
     }
     this.renderer.render(this.scene, this.cameraRig.camera);
 
@@ -233,14 +234,30 @@ export class Game {
     }
   };
 
-  /** Follow the local player while alive; otherwise spectate a living player. */
-  private followTarget(local: Avatar | undefined): THREE.Vector3 {
-    if (local && this.localAlive) return local.position;
-    for (const id of this.aliveAvatars) {
-      const a = this.avatars.get(id);
-      if (a) return a.position;
-    }
-    return local ? local.position : CENTER;
+  /** Build the live scoreboard from synced players; only push when it changes. */
+  private publishStandings(): void {
+    const room = this.net.room;
+    if (!room) return;
+    const players = room.state.players as unknown as {
+      forEach(cb: (p: NetPlayer, id: string) => void): void;
+    };
+    const list: Standing[] = [];
+    players.forEach((p, id) => {
+      list.push({
+        id,
+        name: p.name,
+        points: p.points,
+        roundScore: p.roundScore,
+        colorIndex: p.colorIndex,
+        isLocal: id === this.localId,
+        isBot: p.isBot,
+      });
+    });
+    list.sort((a, b) => b.points - a.points || b.roundScore - a.roundScore);
+    const sig = list.map((x) => `${x.id}:${x.points}:${x.roundScore}`).join("|");
+    if (sig === this.standingsSig) return;
+    this.standingsSig = sig;
+    gameStore.set({ standings: list });
   }
 
   private sampleInput(): InputIntent {
@@ -256,6 +273,7 @@ export class Game {
       run: this.input.isActive("run"),
       jump: this.input.isActive("jump"),
       dive: this.input.isActive("dive"),
+      action: this.input.isActive("action"),
       seq: this.seq++,
     };
   }

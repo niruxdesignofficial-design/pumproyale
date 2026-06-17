@@ -42,8 +42,8 @@ pnpm --filter @party-royale/server db:push
 
 # 3. Drop the KayKit packs into assets-source/ (CC0; not committed) and prepare:
 #      - KayKit Adventurers          (required: playable characters + animations)
-#      - KayKit Platformer Pack      (required: minigame map props)
-#      - KayKit Mini-Game Variety    (crown prop)
+#      - KayKit Mini-Game Variety    (required: all map props, balls, goals,
+#                                      targets, tiles, gems, barriers, decor)
 #    Layout does not matter; the pipeline scans recursively.
 pnpm assets:prepare
 
@@ -65,17 +65,23 @@ If you skip step 3, the client still runs but shows placeholder characters.
 
 From the **main menu**, hit Play, pick one of the 5 **Adventurers** on the
 character-select screen, then Find match. A match fills to 4 (bots take empty
-slots after a short timer), counts down, then runs elimination rounds chosen by
-type (a qualifier, a survival round, then a final) until one winner remains:
+slots after a short timer), counts down, then everyone plays all four minigames
+in order. Each round awards placement points (10 / 6 / 3 / 1 by round score);
+the highest total across all rounds wins. **There is no elimination** — every
+player plays to the end:
 
-- **Beam Run** (race) - run the wood course to the finish gate while rotating
-  beams sweep you and springs bounce you; fall off and respawn at a checkpoint.
-- **Hex Fall** (survival) - tiles dissolve as you stand on them; do not fall through.
-- **Sinking Island** (survival) - the tile island collapses ring by ring; stay on.
-- **Crown Grab** (final) - first to reach the pedestal crown wins instantly.
+- **Soccer Scramble** - push or kick (action button) the ball into either goal;
+  each goal scores for whoever last touched it. Most goals wins the round.
+- **Target Range** - face a target and shoot (action button, forgiving aim cone);
+  each hit scores and the target pops up elsewhere. Most hits wins.
+- **Tower Climb** - jump up the stepped platforms to the flag at the summit;
+  first to the top wins, others ranked by how high they got.
+- **Gem Rush** - run over the gems scattered across the arena; each one scores
+  and a new gem appears. Most gems wins.
 
-Maps are built from the KayKit Platformer Pack; the match director never repeats
-a minigame within a match.
+Maps and props are built entirely from the **KayKit Mini-Game Variety Pack**
+(tiles, goals, targets, gems, barriers, decor); the players are the animated
+KayKit Adventurers.
 
 | Input            | Action                        |
 | ---------------- | ----------------------------- |
@@ -83,6 +89,7 @@ a minigame within a match.
 | Shift            | Run                           |
 | Space            | Jump                          |
 | Ctrl             | Dive                          |
+| E / J / click    | Action (kick / shoot)         |
 | Mouse drag/wheel | Orbit / zoom camera           |
 
 ## Wallet, leaderboard, rewards (devnet)
@@ -112,9 +119,9 @@ a minigame within a match.
 ## Architecture and security
 
 - **Server-authoritative.** The `MatchRoom` runs one Rapier world at a fixed 30 Hz
-  tick. Clients send only input intents (`shared/src/messages.ts`); scoring,
-  eliminations, round transitions, and the winner are decided on the server.
-  Inputs are sanitized and rate-limited; unknown messages are rejected.
+  tick. Clients send only input intents (`shared/src/messages.ts`); per-round
+  scoring, placement points, round transitions, and the points winner are decided
+  on the server. Inputs are sanitized and rate-limited; unknown messages are rejected.
 - **No secrets in the client.** The treasury key, session secret, and DB
   credentials are server-only, loaded from the environment.
 - **Solana defaults to devnet.** Distributing real value on mainnet may carry
@@ -136,6 +143,7 @@ assets-source/  Raw CC0 packs you drop in (gitignored)
 
 - Only `.glb`/`.gltf` are consumed. Packs that ship `.fbx`/`.obj` only must be
   converted first (FBX2glTF or `@gltf-transform`), then re-run `assets:prepare`.
-- The character is `KayKit_AnimatedCharacter_v1.2.glb` (the rigged "PrototypePete"
-  with 30 clips). Obstacles are greybox primitives; drop in the KayKit Prototype
-  Bits and Platformer packs to replace them with modeled props.
+- Players are the rigged KayKit **Adventurers** (shared Rig_Medium clips). Every
+  map and prop (tiles, goals, balls, targets, gems, barriers, decor) is a
+  self-contained `.glb` from the **KayKit Mini-Game Variety Pack**, copied into
+  `client/public/assets/variety/` and placed by `client/src/game/VarietyProps.ts`.

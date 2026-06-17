@@ -6,6 +6,7 @@ import {
   INPUT_MESSAGE,
   MAX_PLAYERS,
   PHYS,
+  PLACE_POINTS,
   TICK_RATE,
   isValidCharacter,
   spawnPoint,
@@ -18,13 +19,13 @@ import { BotController } from "../ai/BotController";
 import { buildRoundPlan } from "../match/MinigameRegistry";
 import type { IMinigame, MinigameContext } from "../match/IMinigame";
 import { recordMatchResult, type Participant } from "../services/leaderboard";
-import { MatchState, PlayerState } from "./schema";
+import { EntityState, MatchState, PlayerState } from "./schema";
 
 /** Lobby fill window once the first human joins (seconds). */
 const FILL_WAIT = 8;
 const COUNTDOWN = 4;
 const INTRO_TIME = 3.5;
-const END_SCREEN = 12;
+const END_SCREEN = 14;
 const MIN_HUMANS = 1;
 /** Generous cap above the ~30 Hz client send rate; excess input is dropped. */
 const MAX_INPUTS_PER_SECOND = 90;
@@ -32,12 +33,11 @@ const MAX_INPUTS_PER_SECOND = 90;
 type Phase = "waiting" | "countdown" | "intro" | "playing" | "ended";
 
 /**
- * Authoritative match room with the full Phase 4 flow:
- * waiting (lobby) -> fill empty slots with bots -> countdown -> one or more
- * minigame rounds (eliminating players) -> ended (exactly one winner).
- *
- * All scoring, elimination, round transitions, and the winner are decided here.
- * Clients only send input intents.
+ * Authoritative match room. Everyone plays every minigame in order; each round
+ * awards placement points by the players' round scores, and the highest total
+ * across all rounds wins. There is no elimination — every player plays to the
+ * end. All scoring, round transitions, and the winner are decided here; clients
+ * only send input intents.
  */
 export class MatchRoom extends Room<MatchState> {
   override maxClients = MAX_PLAYERS;
@@ -46,9 +46,10 @@ export class MatchRoom extends Room<MatchState> {
   private readonly sims = new Map<string, PlayerSim>();
   private readonly bots = new Map<string, BotController>();
   private readonly inputRate = new Map<string, { windowStart: number; count: number }>();
+  private readonly actionEdge = new Map<string, boolean>();
+  private readonly lastAction = new Map<string, boolean>();
   private ctx!: MinigameContext;
   private platformCollider: RAPIER.Collider | null = null;
-  private survivorsTarget = 1;
 
   private spawnCounter = 0;
   private botCounter = 0;
@@ -74,17 +75,44 @@ export class MatchRoom extends Room<MatchState> {
       physics: this.physics,
       state: this.state,
       sims: this.sims,
-      aliveIds: () => [...this.sims.keys()],
-      eliminate: (id, reason) => this.eliminate(id, reason),
+      players: () => [...this.sims.keys()],
+      addScore: (id, delta) => {
+        const p = this.state.players.get(id);
+        if (p) p.roundScore += delta;
+      },
+      setScore: (id, score) => {
+        const p = this.state.players.get(id);
+        if (p) p.roundScore = score;
+      },
+      getScore: (id) => this.state.players.get(id)?.roundScore ?? 0,
       botTarget: (id) => this.minigame?.botTarget?.(id, this.ctx) ?? { x: 0, z: 0 },
+      consumeAction: (id) => {
+        const v = this.actionEdge.get(id) ?? false;
+        if (v) this.actionEdge.set(id, false);
+        return v;
+      },
+      facing: (id) => {
+        const yaw = this.sims.get(id)?.yaw ?? 0;
+        return { x: Math.sin(yaw), z: Math.cos(yaw) };
+      },
+      addEntity: (kind, variant = 0) => {
+        const e = new EntityState();
+        e.kind = kind;
+        e.variant = variant;
+        this.state.entities.push(e);
+        return e;
+      },
       setPlatformEnabled: (enabled) => this.setPlatformEnabled(enabled),
-      survivorsTarget: () => this.survivorsTarget,
     };
 
     this.onMessage(INPUT_MESSAGE, (client, message: InputIntent) => {
       if (this.state.phase === "ended") return;
       if (!this.allowInput(client.sessionId)) return; // rate limit / anti-flood
-      this.sims.get(client.sessionId)?.setInput(sanitizeInput(message));
+      const input = sanitizeInput(message);
+      this.sims.get(client.sessionId)?.setInput(input);
+      const prev = this.lastAction.get(client.sessionId) ?? false;
+      if (input.action && !prev) this.actionEdge.set(client.sessionId, true);
+      this.lastAction.set(client.sessionId, input.action);
     });
 
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), 1000 / TICK_RATE);
@@ -109,12 +137,8 @@ export class MatchRoom extends Room<MatchState> {
   }
 
   override onLeave(client: Client): void {
-    if (this.state.phase === "playing" && this.sims.has(client.sessionId)) {
-      this.eliminate(client.sessionId, "left");
-    } else {
-      this.removeSim(client.sessionId);
-      this.state.players.delete(client.sessionId);
-    }
+    this.removeSim(client.sessionId);
+    this.state.players.delete(client.sessionId);
     this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] leave ${client.sessionId}`);
   }
@@ -214,12 +238,18 @@ export class MatchRoom extends Room<MatchState> {
     this.roundElapsed += dt;
     this.matchClock += dt;
     this.state.roundClock = this.roundElapsed;
+
+    // Let bots press the action button (kick / shoot) before the minigame reads it.
+    for (const id of this.bots.keys()) {
+      if (this.minigame.botAction?.(id, this.ctx)) this.actionEdge.set(id, true);
+    }
+
     this.minigame.update(this.ctx, dt);
-    this.state.alive = this.sims.size;
     this.state.timer = Math.max(0, Math.ceil(this.minigame.maxDuration - this.roundElapsed));
 
     if (this.minigame.isComplete(this.ctx)) {
-      if (this.sims.size <= 1) this.endMatch();
+      this.awardPoints();
+      if (this.roundIndex >= this.roundPlan.length - 1) this.endMatch();
       else this.nextRound();
     }
   }
@@ -238,6 +268,7 @@ export class MatchRoom extends Room<MatchState> {
     this.matchClock = 0;
     while (this.sims.size < MAX_PLAYERS) this.addBot();
     this.roundPlan = buildRoundPlan(this.sims.size);
+    this.state.roundCount = this.roundPlan.length;
     this.state.phase = "countdown";
     this.phaseTimer = COUNTDOWN;
     this.state.alive = this.sims.size;
@@ -246,22 +277,20 @@ export class MatchRoom extends Room<MatchState> {
 
   private startRound(): void {
     this.minigame?.teardown(this.ctx);
+    this.clearEntities();
     const idx = Math.min(this.roundIndex, this.roundPlan.length - 1);
     this.minigame = this.roundPlan[idx]!;
     this.roundElapsed = 0;
     this.state.roundClock = 0;
-    // The last round decides the winner (down to 1); earlier rounds eliminate one.
-    const isFinal = this.roundIndex >= this.roundPlan.length - 1;
-    this.survivorsTarget = isFinal ? 1 : Math.max(1, this.sims.size - 1);
     this.state.round = this.roundIndex + 1;
+    // Fresh round: everyone starts at zero score, and bot action timers reset.
+    this.state.players.forEach((p) => (p.roundScore = 0));
+    this.actionEdge.clear();
+    this.lastAction.clear();
     this.minigame.setup(this.ctx);
-    // Brief intro so the round/map transition reads clearly to players.
     this.state.phase = "intro";
     this.phaseTimer = INTRO_TIME;
-    console.log(
-      `[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name} ` +
-        `(survivors target ${this.survivorsTarget})`,
-    );
+    console.log(`[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name}`);
   }
 
   private nextRound(): void {
@@ -269,20 +298,40 @@ export class MatchRoom extends Room<MatchState> {
     this.startRound();
   }
 
+  /** Turn this round's scores into placement points (10/6/3/1). */
+  private awardPoints(): void {
+    const ranked = [...this.sims.keys()].sort(
+      (a, b) =>
+        (this.state.players.get(b)?.roundScore ?? 0) - (this.state.players.get(a)?.roundScore ?? 0),
+    );
+    ranked.forEach((id, rank) => {
+      const p = this.state.players.get(id);
+      if (p) p.points += PLACE_POINTS[Math.min(rank, PLACE_POINTS.length - 1)] ?? 0;
+    });
+  }
+
   private endMatch(): void {
     this.minigame?.teardown(this.ctx);
     this.minigame = null;
+    this.clearEntities();
     this.state.phase = "ended";
     this.phaseTimer = END_SCREEN;
 
-    const winnerId = this.sims.keys().next().value as string | undefined;
+    // Final placement by total points.
+    const ranked = [...this.state.players.keys()].sort(
+      (a, b) => (this.state.players.get(b)?.points ?? 0) - (this.state.players.get(a)?.points ?? 0),
+    );
     let winnerWallet: string | null = null;
+    ranked.forEach((id, rank) => {
+      const p = this.state.players.get(id);
+      if (!p) return;
+      p.placement = rank + 1;
+      p.anim = rank === 0 ? "win" : "lose";
+    });
+    const winnerId = ranked[0];
     if (winnerId) {
       const winner = this.state.players.get(winnerId);
       if (winner) {
-        winner.alive = true;
-        winner.placement = 1;
-        winner.anim = "win";
         this.state.winnerId = winnerId;
         this.state.winnerName = winner.name;
         if (!winner.isBot && winner.wallet) winnerWallet = winner.wallet;
@@ -291,7 +340,6 @@ export class MatchRoom extends Room<MatchState> {
     this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] winner: ${this.state.winnerName || "(none)"}`);
 
-    // Persist leaderboard + (idempotent) reward for wallet-holding humans.
     const participants: Participant[] = [];
     this.state.players.forEach((p) => {
       if (!p.isBot && p.wallet) {
@@ -324,22 +372,8 @@ export class MatchRoom extends Room<MatchState> {
     this.state.players.set(id, player);
   }
 
-  private eliminate(id: string, reason: string): void {
-    const sim = this.sims.get(id);
-    if (!sim) return;
-    // Never eliminate the last player standing: they win, even if several fall
-    // on the same tick. Guarantees endMatch always has a winner.
-    if (this.sims.size <= 1) return;
-    const before = this.sims.size;
-    const player = this.state.players.get(id);
-    if (player) {
-      player.alive = false;
-      player.placement = before;
-      player.anim = "lose";
-    }
-    this.removeSim(id);
-    this.state.alive = this.sims.size;
-    console.log(`[match ${this.roomId}] eliminate ${id} (${reason}) -> placement ${before}`);
+  private clearEntities(): void {
+    if (this.state.entities.length > 0) this.state.entities.splice(0, this.state.entities.length);
   }
 
   private removeSim(id: string): void {
@@ -347,6 +381,8 @@ export class MatchRoom extends Room<MatchState> {
     this.sims.delete(id);
     this.bots.delete(id);
     this.inputRate.delete(id);
+    this.actionEdge.delete(id);
+    this.lastAction.delete(id);
   }
 
   /**
@@ -365,7 +401,7 @@ export class MatchRoom extends Room<MatchState> {
     return entry.count <= MAX_INPUTS_PER_SECOND;
   }
 
-  /** Add or remove the solid base platform collider (Hex Fall removes it). */
+  /** Add or remove the solid base platform collider (minigames build their own floor). */
   private setPlatformEnabled(enabled: boolean): void {
     if (enabled && !this.platformCollider) {
       this.platformCollider = this.physics.world.createCollider(
@@ -393,6 +429,7 @@ function sanitizeInput(msg: InputIntent): InputIntent {
     run: Boolean(msg?.run),
     jump: Boolean(msg?.jump),
     dive: Boolean(msg?.dive),
+    action: Boolean(msg?.action),
     seq: typeof msg?.seq === "number" && Number.isFinite(msg.seq) ? msg.seq : 0,
   };
 }
