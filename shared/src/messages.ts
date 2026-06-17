@@ -10,6 +10,18 @@ export const MATCH_ROOM = "match";
 /** Message type the client sends each frame with its sampled input. */
 export const INPUT_MESSAGE = "input";
 
+/** Message type the client sends to play a quick emote above their avatar. */
+export const EMOTE_MESSAGE = "emote";
+
+/** The short, text-only emotes (no emojis) players can trigger with keys 1-4. */
+export const EMOTES = ["GG!", "Nice!", "Oops!", "Hi!"] as const;
+export type EmoteId = 0 | 1 | 2 | 3;
+
+/** Payload for an emote message: which emote (index into EMOTES). */
+export interface EmoteMessage {
+  id: number;
+}
+
 /** Input intent the client sends to the server. moveX/moveZ are a world-space,
  * camera-relative direction computed on the client (the server has no camera). */
 export interface InputIntent {
@@ -31,4 +43,6 @@ export interface JoinOptions {
   wallet?: string;
   /** Chosen character id (see characters.ts). */
   character?: string;
+  /** Create a private room (not matched by quick play; joinable only by code). */
+  private?: boolean;
 }

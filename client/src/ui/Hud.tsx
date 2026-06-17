@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { MAX_PLAYERS, teamColor } from "@party-royale/shared";
 import type { GameState, Standing } from "../game/store";
 import { sound } from "../core/Sound";
 import { LobbyPanel } from "./LobbyPanel";
+import { Confetti } from "./Confetti";
 
 const MEDALS = ["/assets/medals/gold.png", "/assets/medals/silver.png", "/assets/medals/bronze.png"];
 
@@ -81,6 +82,7 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
             {state.playerCount}/{MAX_PLAYERS}
           </span>
         </div>
+        <MuteButton />
       </div>
 
       {playing && (
@@ -125,6 +127,7 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
 
       {state.matchPhase === "ended" && (
         <Overlay>
+          <Confetti />
           {state.isLocalWinner ? (
             <div className="hud-win-title">You win!</div>
           ) : (
@@ -145,10 +148,23 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
 
       {(playing || state.matchPhase === "countdown" || state.matchPhase === "waiting") && (
         <div className="hud-hint">
-          WASD move &middot; Shift run &middot; Space jump &middot; E / click action
+          WASD move &middot; Shift run &middot; Space jump &middot; E / click action &middot; 1-4 emote
         </div>
       )}
     </div>
+  );
+}
+
+function MuteButton() {
+  const [muted, setMuted] = useState(sound.isMuted());
+  return (
+    <button
+      className="hud-mute"
+      title={muted ? "Unmute" : "Mute"}
+      onClick={() => setMuted(sound.toggleMuted())}
+    >
+      {muted ? "Sound: off" : "Sound: on"}
+    </button>
   );
 }
 

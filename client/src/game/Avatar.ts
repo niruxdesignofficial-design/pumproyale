@@ -29,6 +29,9 @@ export class Avatar {
   private ringMat: THREE.MeshBasicMaterial | null = null;
   private readonly disposables: { dispose(): void }[] = [];
 
+  private emoteSprite: THREE.Sprite | null = null;
+  private emoteText = "";
+
   constructor(characterId: string, ringColor: number) {
     const gltf = getCharacterGltf(characterId);
     if (gltf) {
@@ -104,8 +107,30 @@ export class Avatar {
     this.ringMat?.color.set(color);
   }
 
+  /** Show a short text emote bubble above the head ("" hides it). */
+  setEmote(text: string): void {
+    if (text === this.emoteText) return;
+    this.emoteText = text;
+    if (this.emoteSprite) {
+      this.object3d.remove(this.emoteSprite);
+      this.emoteSprite.material.map?.dispose();
+      this.emoteSprite.material.dispose();
+      this.emoteSprite = null;
+    }
+    if (!text) return;
+    const sprite = makeEmoteSprite(text);
+    sprite.position.y = 2.3;
+    this.object3d.add(sprite);
+    this.emoteSprite = sprite;
+  }
+
   dispose(): void {
     this.mixer?.stopAllAction();
+    if (this.emoteSprite) {
+      this.emoteSprite.material.map?.dispose();
+      this.emoteSprite.material.dispose();
+      this.emoteSprite = null;
+    }
     for (const d of this.disposables) d.dispose();
     this.object3d.clear();
   }
@@ -157,6 +182,57 @@ export class Avatar {
     const lower = target.toLowerCase();
     return this.clips.find((c) => c.name.toLowerCase().includes(lower)) ?? null;
   }
+}
+
+/** Build a camera-facing speech-bubble sprite for a short emote word. */
+function makeEmoteSprite(text: string): THREE.Sprite {
+  const W = 256;
+  const H = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d")!;
+  // Rounded white bubble with a little tail.
+  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  roundRect(ctx, 16, 12, W - 32, 80, 22);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 16, 90);
+  ctx.lineTo(W / 2 + 16, 90);
+  ctx.lineTo(W / 2, 116);
+  ctx.closePath();
+  ctx.fill();
+  // The word.
+  ctx.fillStyle = "#2a2350";
+  ctx.font = "bold 52px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, W / 2, 52);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.6, 0.8, 1);
+  sprite.renderOrder = 999;
+  return sprite;
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function lerpAngle(a: number, b: number, t: number): number {

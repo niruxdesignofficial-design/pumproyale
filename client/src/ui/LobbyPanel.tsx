@@ -13,6 +13,11 @@ export function LobbyPanel({ state }: { state: GameState }) {
   return (
     <div className="lobby-bar">
       <div className="lobby-bar-title">LOBBY</div>
+      {state.roomCode && (
+        <div className="lobby-code">
+          Invite code: <span className="lobby-code-value">{state.roomCode}</span>
+        </div>
+      )}
       <div className="lobby-bar-sub">
         {state.playerCount}/{MAX_PLAYERS} &middot; starting in {state.timer}s &middot; warm up on the
         parkour!

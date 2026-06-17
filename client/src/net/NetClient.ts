@@ -1,23 +1,51 @@
 import { Client, type Room } from "colyseus.js";
-import { INPUT_MESSAGE, MATCH_ROOM, type InputIntent, type JoinOptions } from "@party-royale/shared";
+import {
+  EMOTE_MESSAGE,
+  INPUT_MESSAGE,
+  MATCH_ROOM,
+  type InputIntent,
+  type JoinOptions,
+} from "@party-royale/shared";
+
+/** How the player wants to enter a match. */
+export type PlayMode =
+  | { kind: "quick" }
+  | { kind: "create" }
+  | { kind: "join"; code: string };
 
 /**
- * Thin Colyseus client wrapper. Connects to a match room, forwards input
- * intents, and exposes the room so the game can subscribe to authoritative
- * state. The client never sends anything but input intents.
+ * Thin Colyseus client wrapper. Connects to a match room (quick play, a new
+ * private room, or an existing room by code), forwards input intents + emotes,
+ * and exposes the room so the game can subscribe to authoritative state. The
+ * client never sends anything that could decide the game — only intents.
  */
 export class NetClient {
   private client: Client | null = null;
   room: Room | null = null;
 
-  async connect(url: string, options: JoinOptions): Promise<Room> {
+  async connect(url: string, options: JoinOptions, mode: PlayMode = { kind: "quick" }): Promise<Room> {
     this.client = new Client(url);
-    this.room = await this.client.joinOrCreate(MATCH_ROOM, options);
+    if (mode.kind === "create") {
+      this.room = await this.client.create(MATCH_ROOM, { ...options, private: true });
+    } else if (mode.kind === "join") {
+      this.room = await this.client.joinById(mode.code, options);
+    } else {
+      this.room = await this.client.joinOrCreate(MATCH_ROOM, options);
+    }
     return this.room;
   }
 
   sendInput(intent: InputIntent): void {
     this.room?.send(INPUT_MESSAGE, intent);
+  }
+
+  sendEmote(id: number): void {
+    this.room?.send(EMOTE_MESSAGE, { id });
+  }
+
+  /** The room id, which doubles as the shareable code for private games. */
+  get roomCode(): string | null {
+    return this.room?.roomId ?? null;
   }
 
   get sessionId(): string | null {

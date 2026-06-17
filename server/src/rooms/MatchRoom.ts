@@ -3,6 +3,8 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import {
   ARENA,
   CHARACTER_IDS,
+  EMOTE_MESSAGE,
+  EMOTES,
   INPUT_MESSAGE,
   MAX_PLAYERS,
   PHYS,
@@ -58,6 +60,8 @@ export class MatchRoom extends Room<MatchState> {
   private readonly actionEdge = new Map<string, boolean>();
   private readonly lastAction = new Map<string, boolean>();
   private readonly botOrder = new Map<string, number>();
+  /** Seconds left to show each player's current emote (cleared at 0). */
+  private readonly emoteTimers = new Map<string, number>();
   private ctx!: MinigameContext;
   private platformCollider: RAPIER.Collider | null = null;
   private lobbyColliders: RAPIER.Collider[] = [];
@@ -76,9 +80,13 @@ export class MatchRoom extends Room<MatchState> {
   private minigame: IMinigame | null = null;
   private roundPlan: IMinigame[] = [];
 
-  override async onCreate(): Promise<void> {
+  override async onCreate(options?: JoinOptions): Promise<void> {
     this.state = new MatchState();
     this.state.phase = "waiting";
+
+    // Private rooms (created via a shared code) are not matched by quick play;
+    // friends join them with `joinById(roomId)`.
+    if (options?.private) this.setPrivate(true);
 
     this.physics = await PhysicsWorld.create(PHYS.gravity, 1 / TICK_RATE);
     // The lobby is a small playable parkour while waiting for players.
@@ -133,7 +141,45 @@ export class MatchRoom extends Room<MatchState> {
       this.lastAction.set(client.sessionId, input.action);
     });
 
+    this.onMessage(EMOTE_MESSAGE, (client, message: { id?: number }) => {
+      const id = Math.floor(message?.id ?? -1);
+      if (id < 0 || id >= EMOTES.length) return;
+      this.showEmote(client.sessionId, id);
+    });
+
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), 1000 / TICK_RATE);
+  }
+
+  /** Show a player's emote above their avatar for a couple seconds. */
+  private showEmote(id: string, emoteId: number): void {
+    const player = this.state.players.get(id);
+    if (!player) return;
+    player.emote = EMOTES[emoteId]!;
+    this.emoteTimers.set(id, 2.5);
+  }
+
+  /** Occasionally let an idle bot emote, so the lobby/match feels alive. */
+  private maybeBotEmote(dt: number): void {
+    if (this.state.phase !== "playing" && this.state.phase !== "waiting") return;
+    for (const id of this.bots.keys()) {
+      if (this.emoteTimers.has(id)) continue;
+      // ~ once every ~40s per bot on average.
+      if (Math.random() < dt / 40) this.showEmote(id, Math.floor(Math.random() * EMOTES.length));
+    }
+  }
+
+  /** Tick down active emotes and clear expired ones. */
+  private updateEmotes(dt: number): void {
+    for (const [id, t] of this.emoteTimers) {
+      const next = t - dt;
+      if (next <= 0) {
+        this.emoteTimers.delete(id);
+        const p = this.state.players.get(id);
+        if (p) p.emote = "";
+      } else {
+        this.emoteTimers.set(id, next);
+      }
+    }
   }
 
   override onJoin(client: Client, options?: JoinOptions): void {
@@ -159,6 +205,7 @@ export class MatchRoom extends Room<MatchState> {
   override onLeave(client: Client): void {
     this.removeSim(client.sessionId);
     this.state.players.delete(client.sessionId);
+    this.emoteTimers.delete(client.sessionId);
     this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] leave ${client.sessionId}`);
   }
@@ -172,6 +219,8 @@ export class MatchRoom extends Room<MatchState> {
   private update(deltaMs: number): void {
     const dt = deltaMs / 1000;
     this.simulate(dt);
+    this.updateEmotes(dt);
+    this.maybeBotEmote(dt);
 
     switch (this.state.phase as Phase) {
       case "waiting":

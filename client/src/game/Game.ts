@@ -15,6 +15,7 @@ import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
 import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
+import { getPlayMode } from "./matchMode";
 import { getPlayerName } from "./name";
 import { gameStore, type Standing } from "./store";
 
@@ -59,6 +60,7 @@ interface NetPlayer {
   points: number;
   roundScore: number;
   team: number;
+  emote: string;
 }
 
 /** Ground-ring color for a player: team color in team rounds, else candy color. */
@@ -85,6 +87,7 @@ export class Game {
 
   private readonly avatars = new Map<string, Avatar>();
   private readonly tracers: { mesh: THREE.Mesh; ttl: number }[] = [];
+  private readonly dust: { mesh: THREE.Mesh; ttl: number; max: number }[] = [];
   private localId: string | null = null;
   private cameraSnapped = false;
   private standingsSig = "";
@@ -122,14 +125,24 @@ export class Game {
     let room: Room;
     try {
       const wallet = getAuthWallet() ?? undefined;
-      room = await this.net.connect(defaultServerUrl(), {
-        name: getPlayerName() || randomName(),
-        wallet,
-        character: getSelectedCharacter(),
-      });
+      room = await this.net.connect(
+        defaultServerUrl(),
+        {
+          name: getPlayerName() || randomName(),
+          wallet,
+          character: getSelectedCharacter(),
+        },
+        getPlayMode(),
+      );
     } catch (err) {
       console.error("[net] connection failed", err);
-      gameStore.set({ status: "error", error: "Could not reach the game server." });
+      const joining = getPlayMode().kind === "join";
+      gameStore.set({
+        status: "error",
+        error: joining
+          ? "Could not find that game. Check the code and try again."
+          : "Could not reach the game server.",
+      });
       return;
     }
     if (this.disposed) {
@@ -138,11 +151,17 @@ export class Game {
     }
 
     this.localId = room.sessionId;
+    // Surface the room code for private games so the host can share it.
+    if (getPlayMode().kind === "create") {
+      gameStore.set({ roomCode: this.net.roomCode ?? "" });
+    }
     this.wireRoom(room);
 
     this.input.attach();
     // Enable audio on the first user gesture (browsers block it before that).
     window.addEventListener("keydown", this.enableSound, { once: true });
+    // Emotes: keys 1-4 send a quick text bubble above your avatar.
+    window.addEventListener("keydown", this.onEmoteKey);
     gameStore.set({ status: "connected", usingFallback: getCharacterGltf("knight") === null });
     this.loop.start();
   }
@@ -153,6 +172,7 @@ export class Game {
     window.removeEventListener("resize", this.onResize);
     this.input.detach();
     window.removeEventListener("keydown", this.enableSound);
+    window.removeEventListener("keydown", this.onEmoteKey);
     void this.net.dispose();
     for (const t of this.tracers) {
       this.scene.remove(t.mesh);
@@ -160,6 +180,12 @@ export class Game {
       (t.mesh.material as THREE.Material).dispose();
     }
     this.tracers.length = 0;
+    for (const d of this.dust) {
+      this.scene.remove(d.mesh);
+      d.mesh.geometry.dispose();
+      (d.mesh.material as THREE.Material).dispose();
+    }
+    this.dust.length = 0;
     for (const avatar of this.avatars.values()) avatar.dispose();
     this.avatars.clear();
     this.cameraRig.dispose();
@@ -185,6 +211,7 @@ export class Game {
 
       let lastAnim = player.anim;
       let lastTeam = NaN;
+      let lastEmote = "";
       $(player).onChange(() => {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
         const anim = asAnim(player.anim);
@@ -192,6 +219,17 @@ export class Game {
         if (anim === "shoot" && lastAnim !== "shoot") {
           this.spawnTracer(avatar.position, player.yaw);
           if (sessionId === this.localId) sound.play("shoot");
+        }
+        // Dust puff when landing (an airborne anim resolves to grounded movement).
+        const wasAir = lastAnim === "jump" || lastAnim === "fall" || lastAnim === "dive";
+        if (wasAir && (anim === "idle" || anim === "run")) this.spawnDust(avatar.position);
+        // Screen-shake when the local player takes a hit.
+        if (anim === "hit" && lastAnim !== "hit" && sessionId === this.localId) {
+          this.cameraRig.addShake(0.28);
+        }
+        if (player.emote !== lastEmote) {
+          lastEmote = player.emote;
+          avatar.setEmote(player.emote);
         }
         lastAnim = player.anim;
         avatar.setAnim(anim);
@@ -237,14 +275,20 @@ export class Game {
     });
     s.listen?.("alive", (v: number) => gameStore.set({ alivePlayers: v }));
     s.listen?.("banner", (v: string) => {
-      if (v && /goal/i.test(v)) sound.play("goal");
+      if (v && /goal/i.test(v)) {
+        sound.play("goal");
+        this.cameraRig.addShake(0.22);
+      }
       gameStore.set({ banner: v });
     });
     s.listen?.("winnerName", (v: string) => gameStore.set({ winnerName: v }));
     s.listen?.("winnerId", (v: string) => {
       const isLocal = v.length > 0 && v === this.localId;
       gameStore.set({ isLocalWinner: isLocal });
-      if (v.length > 0) sound.play(isLocal ? "win" : "lose");
+      if (v.length > 0) {
+        sound.play(isLocal ? "win" : "lose");
+        if (isLocal) this.cameraRig.addShake(0.5);
+      }
     });
 
     room.onLeave(() => {
@@ -280,6 +324,7 @@ export class Game {
     }
 
     this.updateTracers(dt);
+    this.updateDust(dt);
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
     if (local) {
@@ -350,6 +395,50 @@ export class Game {
       }
     }
   }
+
+  /** A quick expanding dust ring at an avatar's feet when it lands. */
+  private spawnDust(at: THREE.Vector3): void {
+    const geo = new THREE.RingGeometry(0.18, 0.34, 20);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xf3ead2,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(at.x, 0.06, at.z);
+    this.scene.add(mesh);
+    this.dust.push({ mesh, ttl: 0.4, max: 0.4 });
+  }
+
+  private updateDust(dt: number): void {
+    for (let i = this.dust.length - 1; i >= 0; i--) {
+      const d = this.dust[i]!;
+      d.ttl -= dt;
+      const k = Math.max(0, d.ttl / d.max);
+      const s = 1 + (1 - k) * 2.4;
+      d.mesh.scale.set(s, s, s);
+      (d.mesh.material as THREE.MeshBasicMaterial).opacity = k * 0.55;
+      if (d.ttl <= 0) {
+        this.scene.remove(d.mesh);
+        d.mesh.geometry.dispose();
+        (d.mesh.material as THREE.Material).dispose();
+        this.dust.splice(i, 1);
+      }
+    }
+  }
+
+  private readonly onEmoteKey = (e: KeyboardEvent): void => {
+    // Ignore when typing in an input; only act on the digit row 1-4.
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    const map: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
+    const id = map[e.code];
+    if (id === undefined) return;
+    this.net.sendEmote(id);
+  };
 
   private sampleInput(): InputIntent {
     const f = (this.input.isActive("forward") ? 1 : 0) - (this.input.isActive("back") ? 1 : 0);

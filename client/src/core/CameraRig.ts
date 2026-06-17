@@ -14,6 +14,10 @@ export class CameraRig {
   private readonly smoothedTarget = new THREE.Vector3(0, 1, 0);
   private readonly tmp = new THREE.Vector3();
   private readonly delta = new THREE.Vector3();
+  /** Current screen-shake magnitude + the offset applied last frame (so it can be
+   * undone before OrbitControls recomputes the camera from its true position). */
+  private shakeMag = 0;
+  private readonly shakeVec = new THREE.Vector3();
 
   constructor(domElement: HTMLElement, aspect: number) {
     this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 600);
@@ -79,8 +83,27 @@ export class CameraRig {
     return out.normalize();
   }
 
+  /** Add a screen-shake impulse (e.g. on a goal, a hit, or the win). */
+  addShake(magnitude: number): void {
+    this.shakeMag = Math.min(0.7, this.shakeMag + magnitude);
+  }
+
   update(): void {
+    // Undo last frame's shake so OrbitControls works from the true position.
+    this.camera.position.sub(this.shakeVec);
     this.controls.update();
+    if (this.shakeMag > 0.001) {
+      this.shakeMag *= 0.84;
+      this.shakeVec.set(
+        (Math.random() - 0.5) * this.shakeMag * 2,
+        (Math.random() - 0.5) * this.shakeMag * 2,
+        (Math.random() - 0.5) * this.shakeMag * 2,
+      );
+    } else {
+      this.shakeMag = 0;
+      this.shakeVec.set(0, 0, 0);
+    }
+    this.camera.position.add(this.shakeVec);
   }
 
   dispose(): void {

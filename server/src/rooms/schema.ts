@@ -25,6 +25,8 @@ export class PlayerState extends Schema {
   roundScore = 0;
   /** Team for team rounds (0/1), or -1 when not a team round. */
   team = -1;
+  /** Transient emote text shown above the avatar ("" when none). */
+  emote = "";
 }
 
 defineTypes(PlayerState, {
@@ -43,6 +45,7 @@ defineTypes(PlayerState, {
   points: "number",
   roundScore: "number",
   team: "number",
+  emote: "string",
 });
 
 /**

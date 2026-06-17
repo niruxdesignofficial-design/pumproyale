@@ -38,6 +38,8 @@ export interface GameState {
   readonly localPlacement: number;
   readonly isLocalWinner: boolean;
   readonly winnerName: string;
+  // Room code for private games (shown in the lobby so the host can share it).
+  readonly roomCode: string;
 }
 
 const INITIAL: GameState = {
@@ -58,6 +60,7 @@ const INITIAL: GameState = {
   localPlacement: 0,
   isLocalWinner: false,
   winnerName: "",
+  roomCode: "",
 };
 
 class GameStore {
