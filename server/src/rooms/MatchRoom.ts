@@ -15,6 +15,7 @@ import { PlayerSim } from "../physics/PlayerSim";
 import { BotController } from "../ai/BotController";
 import { createMinigame } from "../match/MinigameRegistry";
 import type { IMinigame, MinigameContext } from "../match/IMinigame";
+import { recordMatchResult, type Participant } from "../services/leaderboard";
 import { MatchState, PlayerState } from "./schema";
 
 /** Lobby fill window once the first human joins (seconds). */
@@ -51,6 +52,7 @@ export class MatchRoom extends Room<MatchState> {
   private phaseTimer = 0;
   private roundIndex = 0;
   private roundElapsed = 0;
+  private matchClock = 0;
   private minigame: IMinigame | null = null;
 
   override async onCreate(): Promise<void> {
@@ -184,6 +186,7 @@ export class MatchRoom extends Room<MatchState> {
   private updatePlaying(dt: number): void {
     if (!this.minigame) return;
     this.roundElapsed += dt;
+    this.matchClock += dt;
     this.state.roundClock = this.roundElapsed;
     this.minigame.update(this.ctx, dt);
     this.state.alive = this.sims.size;
@@ -206,6 +209,7 @@ export class MatchRoom extends Room<MatchState> {
   private startMatch(): void {
     this.lock();
     this.autoDispose = false;
+    this.matchClock = 0;
     while (this.sims.size < MAX_PLAYERS) this.addBot();
     this.state.phase = "countdown";
     this.phaseTimer = COUNTDOWN;
@@ -240,6 +244,7 @@ export class MatchRoom extends Room<MatchState> {
     this.phaseTimer = END_SCREEN;
 
     const winnerId = this.sims.keys().next().value as string | undefined;
+    let winnerWallet: string | null = null;
     if (winnerId) {
       const winner = this.state.players.get(winnerId);
       if (winner) {
@@ -248,10 +253,24 @@ export class MatchRoom extends Room<MatchState> {
         winner.anim = "win";
         this.state.winnerId = winnerId;
         this.state.winnerName = winner.name;
+        if (!winner.isBot && winner.wallet) winnerWallet = winner.wallet;
       }
     }
     this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] winner: ${this.state.winnerName || "(none)"}`);
+
+    // Persist leaderboard + (idempotent) reward for wallet-holding humans.
+    const participants: Participant[] = [];
+    this.state.players.forEach((p) => {
+      if (!p.isBot && p.wallet) {
+        participants.push({ wallet: p.wallet, name: p.name, placement: p.placement });
+      }
+    });
+    if (participants.length > 0) {
+      recordMatchResult(this.roomId, participants, winnerWallet, this.matchClock).catch((err) =>
+        console.error(`[match ${this.roomId}] failed to record result`, err),
+      );
+    }
   }
 
   // --- helpers -------------------------------------------------------------

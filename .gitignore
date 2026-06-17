@@ -6,6 +6,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# local database (Prisma dev SQLite)
+*.db
+*.db-journal
+
 # environment
 .env
 .env.local

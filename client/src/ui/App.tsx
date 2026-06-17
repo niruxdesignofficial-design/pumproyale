@@ -4,6 +4,7 @@ import { gameStore } from "../game/store";
 import { SolanaProviders } from "../solana/SolanaProviders";
 import { Hud } from "./Hud";
 import { WalletPanel } from "./WalletPanel";
+import { Leaderboard } from "./Leaderboard";
 
 /**
  * Root React component. Wraps the app in the Solana wallet context, owns the
@@ -31,6 +32,7 @@ export function App() {
         <canvas ref={canvasRef} className="game-canvas" />
         <Hud state={state} />
         <WalletPanel />
+        <Leaderboard />
       </div>
     </SolanaProviders>
   );

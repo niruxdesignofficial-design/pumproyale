@@ -1,0 +1,38 @@
+// Party Royale persistence. Dev uses SQLite for zero setup; switch the provider
+// to postgresql and point DATABASE_URL at Postgres for production.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Off-chain leaderboard, keyed by wallet.
+model Player {
+  wallet        String   @id
+  name          String   @default("")
+  wins          Int      @default(0)
+  matchesPlayed Int      @default(0)
+  points        Int      @default(0)
+  bestTime      Float? // best (lowest) winning round time, seconds
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+}
+
+// One reward per match (idempotent via the unique matchId). A reward is created
+// "eligible" when a wallet-holding player wins, then transitions to claimed when
+// the treasury pays out on devnet.
+model Reward {
+  id          String    @id @default(cuid())
+  matchId     String    @unique
+  wallet      String
+  amount      Int // smallest units (lamports for SOL, or token base units)
+  status      String    @default("eligible") // eligible | claiming | claimed
+  txSignature String?
+  createdAt   DateTime  @default(now())
+  claimedAt   DateTime?
+
+  @@index([wallet, status])
+}

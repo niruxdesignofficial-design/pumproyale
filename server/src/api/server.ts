@@ -1,10 +1,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { registerAuthRoutes } from "./auth";
+import { registerGameRoutes } from "./game";
 
 /**
- * Builds the REST API (auth in Phase 6; leaderboard and rewards in Phase 7).
- * Runs on its own port alongside the Colyseus game server.
+ * Builds the REST API: auth (sign-in), leaderboard, and reward claims. Runs on
+ * its own port alongside the Colyseus game server.
  */
 export async function createApiServer(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
@@ -12,6 +13,7 @@ export async function createApiServer(): Promise<FastifyInstance> {
 
   app.get("/api/health", async () => ({ ok: true }));
   registerAuthRoutes(app);
+  registerGameRoutes(app);
 
   return app;
 }
