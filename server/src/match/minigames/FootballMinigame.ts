@@ -180,12 +180,14 @@ export class FootballMinigame implements IMinigame {
     const oGoal = ownGoalZ(team);
 
     const ballDist = Math.hypot(bp.x - p.x, bp.z - p.z);
-    const ballInOwnHalf = team === 0 ? bp.z < -2 : bp.z > 2;
     const support = ctx.botIndex(id) % 2 === 1;
 
-    // Defender (or supporter while the ball is in our half): sit between ball and goal.
-    if (ballInOwnHalf && (support || ballDist > 8)) {
-      return { tx: bp.x * 0.5, tz: (bp.z + oGoal) / 2 };
+    // Keeper: one bot guards its own goal mouth, tracking the ball's x and
+    // clearing it when it gets close. (Makes soccer feel like a real match.)
+    if (support) {
+      const gx = Math.max(-SOCCER.goalHalf + 0.5, Math.min(SOCCER.goalHalf - 0.5, bp.x));
+      const guardZ = oGoal + (team === 0 ? 1.8 : -1.8);
+      return { tx: gx, tz: guardZ, action: ballDist <= KICK_RANGE + 0.3 };
     }
 
     // Direction from the ball toward the goal mouth (x = 0).

@@ -9,13 +9,14 @@ import {
   shootingMap,
   climbMap,
   gemsMap,
+  lobbyMap,
   launcherBall,
   sweeperAngle,
 } from "@party-royale/shared";
 import { buildMapView } from "./MapBuilder";
 import { makeProp } from "./VarietyProps";
 
-type Active = "none" | "football" | "shooting" | "climb" | "gems";
+type Active = "none" | "lobby" | "football" | "shooting" | "climb" | "gems";
 
 /** Minimal shape of a synced dynamic entity (ball / target / gem). */
 interface NetEntity {
@@ -80,7 +81,9 @@ export class MinigameViews {
             ? climbMap()
             : next === "gems"
               ? gemsMap()
-              : null;
+              : next === "lobby"
+                ? lobbyMap()
+                : null;
     if (map) {
       this.container.add(buildMapView(map));
       for (const s of map.sweepers ?? []) {
@@ -206,6 +209,7 @@ function buildEntity(e: NetEntity): THREE.Object3D | null {
 }
 
 function classify(name: string): Active {
+  if (name === "lobby") return "lobby";
   if (/soccer|football/i.test(name)) return "football";
   if (/target|range|shoot/i.test(name)) return "shooting";
   if (/climb|tower/i.test(name)) return "climb";

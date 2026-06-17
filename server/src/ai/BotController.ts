@@ -32,6 +32,10 @@ export class BotController {
   private inited = false;
   private stuck = 0;
   private jumpCd = 0;
+  /** Human touches: occasional hesitation + smoothed (non-snappy) turning. */
+  private pauseTimer = 0;
+  private headX = 0;
+  private headZ = 0;
 
   think(
     sim: PlayerSim,
@@ -63,6 +67,26 @@ export class BotController {
     nx += Math.cos(this.phase) * wander;
     nz += Math.sin(this.phase * 1.3) * wander;
 
+    // Human turning: ease the heading toward the target instead of snapping.
+    const turn = 0.16 + this.skill * 0.16;
+    this.headX += (nx - this.headX) * turn;
+    this.headZ += (nz - this.headZ) * turn;
+    nx = this.headX;
+    nz = this.headZ;
+
+    // Human hesitation: occasional brief pauses (more for lower-skill bots).
+    let paused = false;
+    if (this.pauseTimer > 0) {
+      this.pauseTimer -= dt;
+      paused = true;
+    } else if (!plan.jump && Math.random() < 0.006 * (1.4 - this.skill)) {
+      this.pauseTimer = 0.18 + Math.random() * 0.35;
+    }
+    if (paused) {
+      nx *= 0.05;
+      nz *= 0.05;
+    }
+
     const moved = Math.hypot(p.x - this.lastX, p.z - this.lastZ);
     this.lastX = p.x;
     this.lastZ = p.z;
@@ -70,7 +94,9 @@ export class BotController {
     if (this.jumpCd > 0) this.jumpCd -= dt;
     let jump = false;
 
-    if (plan.jump) {
+    if (paused) {
+      // hesitating: don't jump/act this moment
+    } else if (plan.jump) {
       jump = true;
     } else if (sim.isGrounded && this.jumpCd <= 0 && !plan.hold && (nx !== 0 || nz !== 0)) {
       // Probe for ground a step ahead (origin raised so step-ups still read as ground).
@@ -110,7 +136,7 @@ export class BotController {
       run: true,
       jump,
       dive: false,
-      action: Boolean(plan.action),
+      action: !paused && Boolean(plan.action),
       seq,
     };
   }

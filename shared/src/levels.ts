@@ -27,13 +27,15 @@ export interface MapProp {
   z: number;
   /** Yaw in radians (default 0). */
   yaw?: number;
+  /** Pitch (tilt about X) in radians, for ramps (default 0). */
+  pitch?: number;
   /** Target footprint = largest horizontal dimension, world units (default 2). */
   size?: number;
   /** Vertical anchor (default "bottom"). */
   anchor?: PropAnchor;
 }
 
-/** A physics collider box (axis aligned, optional yaw), half-extents from center. */
+/** A physics collider box (axis aligned, optional yaw/pitch), half-extents from center. */
 export interface MapCollider {
   x: number;
   y: number;
@@ -42,6 +44,20 @@ export interface MapCollider {
   hy: number;
   hz: number;
   yaw?: number;
+  /** Pitch (tilt about X) in radians, for ramps (default 0). */
+  pitch?: number;
+}
+
+/** Quaternion {x,y,z,w} composing a yaw (about Y) then a pitch (about X). */
+export function yawPitchQuat(
+  yaw: number,
+  pitch: number,
+): { x: number; y: number; z: number; w: number } {
+  const cy = Math.cos(yaw / 2);
+  const sy = Math.sin(yaw / 2);
+  const cp = Math.cos(pitch / 2);
+  const sp = Math.sin(pitch / 2);
+  return { x: cy * sp, y: sy * cp, z: -sy * sp, w: cy * cp };
 }
 
 /** A soccer goal trigger zone owned by one player (by spawn index). */
@@ -276,6 +292,11 @@ export function footballMap(): MinigameMap {
     { model: "flag_teamBlue", x: goalHalf + 0.5, y: 0, z: -halfZ + 0.5, size: 1.8 },
     { model: "flag_teamRed", x: -goalHalf - 0.5, y: 0, z: halfZ - 0.5, size: 1.8 },
     { model: "flag_teamRed", x: goalHalf + 0.5, y: 0, z: halfZ - 0.5, size: 1.8 },
+    // Corner flags (pitch dressing).
+    { model: "flag_teamYellow", x: -halfX + 0.6, y: 0, z: -halfZ + 0.6, size: 1.4 },
+    { model: "flag_teamYellow", x: halfX - 0.6, y: 0, z: -halfZ + 0.6, size: 1.4 },
+    { model: "flag_teamYellow", x: -halfX + 0.6, y: 0, z: halfZ - 0.6, size: 1.4 },
+    { model: "flag_teamYellow", x: halfX - 0.6, y: 0, z: halfZ - 0.6, size: 1.4 },
   );
 
   // Tall invisible side walls (full length).
@@ -326,18 +347,19 @@ export const SHOOTING = {
   cone: 0.34,
   /** Seconds between shots. */
   cooldown: 0.45,
-  /** Candidate target spots (far side of the barrier; targets relocate between them). */
+  /** Candidate target spots (far side of the barrier, at -z so they face the
+   * shooters and sit in the camera's view). Targets relocate between them. */
   spots: [
-    { x: -8, z: 8 },
-    { x: -4, z: 6 },
-    { x: 0, z: 9 },
-    { x: 4, z: 6 },
-    { x: 8, z: 8 },
-    { x: -7, z: 3 },
-    { x: 7, z: 3 },
-    { x: -3, z: 5 },
-    { x: 3, z: 5 },
-    { x: 0, z: 4 },
+    { x: -8, z: -8 },
+    { x: -4, z: -6 },
+    { x: 0, z: -9 },
+    { x: 4, z: -6 },
+    { x: 8, z: -8 },
+    { x: -7, z: -3 },
+    { x: 7, z: -3 },
+    { x: -3, z: -5 },
+    { x: 3, z: -5 },
+    { x: 0, z: -4 },
   ] as { x: number; z: number }[],
   /** Height of a target's center. */
   y: 1.3,
@@ -363,26 +385,26 @@ export function shootingMap(): MinigameMap {
     props.push(...w.props);
     colliders.push(...w.colliders);
   }
-  // The dividing barrier between shooters (z < -1) and targets (z > 1): a TALL
+  // The dividing barrier between shooters (z > 1) and targets (z < -1): a TALL
   // collider so players cannot cross or jump it (the visible barrier stays low).
-  const divider = wall("z", -1, -HALF_X, HALF_X, 3.2, "barrierLarge");
+  const divider = wall("z", 1, -HALF_X, HALF_X, 3.2, "barrierLarge");
   props.push(...divider.props);
   colliders.push(...divider.colliders);
   // Desert dressing.
   props.push(
-    { model: "rocksA_desert", x: -9, y: 0, z: 9, size: 2 },
-    { model: "tree_desert", x: 9, y: 0, z: 9, size: 3 },
-    { model: "plantA_desert", x: -9, y: 0, z: -9, size: 1.4 },
+    { model: "rocksA_desert", x: -9, y: 0, z: -9, size: 2 },
+    { model: "tree_desert", x: 9, y: 0, z: -9, size: 3 },
+    { model: "plantA_desert", x: -9, y: 0, z: 9, size: 1.4 },
   );
   return {
     id: "shooting",
     props,
     colliders,
     spawns: [
-      { x: -6, y: SPAWN_Y, z: -7 },
-      { x: -2, y: SPAWN_Y, z: -7 },
-      { x: 2, y: SPAWN_Y, z: -7 },
-      { x: 6, y: SPAWN_Y, z: -7 },
+      { x: -6, y: SPAWN_Y, z: 7 },
+      { x: -2, y: SPAWN_Y, z: 7 },
+      { x: 2, y: SPAWN_Y, z: 7 },
+      { x: 6, y: SPAWN_Y, z: 7 },
     ],
     killY: -8,
   };
@@ -402,30 +424,37 @@ export interface ClimbStep {
 const CLIMB_BASE: ClimbStep = { x: 0, y: 0, z: -9, w: 10, d: 4 };
 const CLIMB_FORK: ClimbStep = { x: 0, y: 1, z: -5.5, w: 10, d: 3 };
 
-/** EASY route (left): long, wide, gentle steps, no hazards. */
-export const CLIMB_EASY: ClimbStep[] = [
-  { x: -4, y: 2.0, z: -2.0, w: 5, d: 3 },
-  { x: -5, y: 2.75, z: 0.2, w: 5, d: 3 },
-  { x: -5, y: 3.5, z: 2.4, w: 5, d: 3 },
-  { x: -5, y: 4.25, z: 4.6, w: 5, d: 3 },
-  { x: -5, y: 5.0, z: 6.8, w: 5, d: 3 },
-  { x: -4.5, y: 5.75, z: 9.0, w: 5, d: 3 },
-  { x: -4, y: 6.5, z: 11.2, w: 5, d: 3 },
-  { x: -3.5, y: 7.25, z: 13.4, w: 5, d: 3 },
-  { x: -3, y: 8.0, z: 15.0, w: 5, d: 3 },
-];
+/**
+ * EASY route (blue, the LONG one): a long weaving jump course on the left — many
+ * spaced platforms you must jump between, winding left/right while climbing
+ * gently. Challenging but fair (small rises, moderate gaps). ~3x the old length.
+ */
+function buildEasyRoute(): ClimbStep[] {
+  const out: ClimbStep[] = [];
+  const n = 26;
+  for (let i = 1; i <= n; i++) {
+    const t = i / n;
+    const y = 1.6 + t * 6.4; // ~2 -> 8
+    const z = -3 + (i - 1) * 0.72; // advance toward the summit (ends ~z15)
+    const x = -4.5 + Math.sin(i * 0.8) * 3.8; // weave between ~ -8.3 and -0.7
+    out.push({ x, y, z, w: 2.9, d: 2.6 });
+  }
+  return out;
+}
+export const CLIMB_EASY: ClimbStep[] = buildEasyRoute();
 
-/** HARD route (right): short, steep, narrow, with hazards. */
+/** HARD route (yellow, the SHORT one): steep narrow steps with hazards. */
 export const CLIMB_HARD: ClimbStep[] = [
-  { x: 4, y: 2.4, z: -2.0, w: 3.6, d: 2.6 },
-  { x: 5, y: 3.8, z: 1.5, w: 3.4, d: 2.4 },
-  { x: 5, y: 5.2, z: 5.0, w: 3.4, d: 2.4 },
-  { x: 4.5, y: 6.6, z: 8.5, w: 3.4, d: 2.4 },
-  { x: 4, y: 8.0, z: 11.8, w: 3.6, d: 2.6 },
+  { x: 4, y: 2.3, z: -2.0, w: 3.6, d: 2.6 },
+  { x: 5, y: 3.25, z: 1.0, w: 3.4, d: 2.4 },
+  { x: 5, y: 4.2, z: 4.0, w: 3.4, d: 2.4 },
+  { x: 4.5, y: 5.2, z: 7.0, w: 3.4, d: 2.4 },
+  { x: 4, y: 6.2, z: 10.0, w: 3.4, d: 2.4 },
+  { x: 3.5, y: 7.2, z: 13.0, w: 3.6, d: 2.6 },
 ];
 
-/** Shared summit platform with the flag; both routes lead onto it. */
-const CLIMB_SUMMIT: ClimbStep = { x: 0, y: 8, z: 16, w: 14, d: 12 };
+/** The raised WIN platform: climb onto it to win the round. Both routes hop up. */
+const CLIMB_SUMMIT: ClimbStep = { x: 0, y: 9.5, z: 18, w: 8, d: 6 };
 
 /** Y a climber must reach (summit top) to finish the round. */
 export const CLIMB_FINISH_Y = CLIMB_SUMMIT.y;
@@ -473,12 +502,13 @@ export function climbMap(): MinigameMap {
   for (const s of climbPlatforms()) {
     colliders.push({ x: s.x, y: s.y - 0.5, z: s.z, hx: s.w / 2, hy: 0.5, hz: s.d / 2 });
   }
-  // Visual tiles: base/fork neutral, easy = forest (calm), hard = team-yellow, summit = forest.
+  // Visual tiles: base/fork neutral, easy = blue (long route), hard = yellow,
+  // summit = a distinct gold WIN platform.
   props.push(...tileStep(CLIMB_BASE, "tileLarge_forest"));
   props.push(...tileStep(CLIMB_FORK, "tileLarge_forest"));
   for (const s of CLIMB_EASY) props.push(...tileStep(s, "tileLarge_teamBlue"));
   for (const s of CLIMB_HARD) props.push(...tileStep(s, "tileLarge_teamYellow"));
-  props.push(...tileStep(CLIMB_SUMMIT, "tileLarge_forest"));
+  props.push(...tileStep(CLIMB_SUMMIT, "tileLarge_teamYellow"));
 
   // Hard-route rotating sweepers.
   const sweepers: MapSweeper[] = [
@@ -503,9 +533,18 @@ export function climbMap(): MinigameMap {
     props.push({ model: l.model, x: l.x, y: l.y, z: l.z, size: 1.8, anchor: "bottom", yaw: Math.PI / 2 });
   }
 
-  // Flag on the summit + signposts at the fork (easy left, hard right) + decor.
-  props.push({ model: "flag_teamYellow", x: CLIMB_SUMMIT.x, y: CLIMB_SUMMIT.y, z: CLIMB_SUMMIT.z, size: 2.6 });
+  // WIN platform dressing: a big flag + corner flags + stars so it reads as "the
+  // goal — reach it to win". Plus fork signposts (blue left = long, yellow right =
+  // short) and base decor.
+  const sx = CLIMB_SUMMIT.x;
+  const sy = CLIMB_SUMMIT.y;
+  const sz = CLIMB_SUMMIT.z;
   props.push(
+    { model: "flag_teamYellow", x: sx, y: sy, z: sz + 1.6, size: 3 },
+    { model: "flag_teamYellow", x: sx - 3, y: sy, z: sz - 2, size: 1.8 },
+    { model: "flag_teamYellow", x: sx + 3, y: sy, z: sz - 2, size: 1.8 },
+    { model: "star", x: sx - 2, y: sy + 0.4, z: sz, size: 1.2, anchor: "center" },
+    { model: "star", x: sx + 2, y: sy + 0.4, z: sz, size: 1.2, anchor: "center" },
     { model: "flag_teamBlue", x: -3, y: CLIMB_FORK.y, z: CLIMB_FORK.z + 1, size: 1.6 },
     { model: "flag_teamYellow", x: 3, y: CLIMB_FORK.y, z: CLIMB_FORK.z + 1, size: 1.6 },
     { model: "tree_forest", x: -7, y: 0, z: -9, size: 3.5 },
@@ -556,7 +595,7 @@ function launcherAcross(s: ClimbStep, phase: number): MapLauncher {
 
 export const GEMS = {
   /** Gems present at once. */
-  count: 14,
+  count: 18,
   /** Pickup radius. */
   pickupR: 1.1,
   /** Seconds before a collected gem reappears on another live tile. */
@@ -629,9 +668,75 @@ export function gemsMap(): MinigameMap {
   };
 }
 
+// --- Lobby parkour (playable while waiting) ---------------------------------
+
+/** Jump platforms forming a loop you can warm up on while waiting for players. */
+const LOBBY_STEPS: ClimbStep[] = [
+  { x: -6, y: 1.0, z: -3, w: 3, d: 3 },
+  { x: -3, y: 2.0, z: -7, w: 3, d: 3 },
+  { x: 1, y: 3.0, z: -9, w: 3.5, d: 3 },
+  { x: 5, y: 3.8, z: -7, w: 3.5, d: 3.5 }, // high landing
+  { x: 7, y: 2.6, z: -2, w: 3, d: 3 },
+  { x: 6, y: 1.4, z: 3, w: 3, d: 3 }, // back down toward the plaza
+];
+
+/**
+ * A small, self-contained lobby parkour: a plaza with a ramp + a loop of jump
+ * platforms. No scoring — just somewhere to move around while the lobby fills.
+ */
+export function lobbyMap(): MinigameMap {
+  const HALF = 11;
+  const props: MapProp[] = floorTiles("tileLarge_forest", 6, 6, 4);
+  const colliders: MapCollider[] = [floorCollider(HALF, HALF)];
+
+  // Low perimeter wall so you stay on the plaza (except via the parkour).
+  for (const [axis, fixed, from, to] of [
+    ["x", -HALF - 0.4, -HALF, HALF],
+    ["x", HALF + 0.4, -HALF, HALF],
+    ["z", -HALF - 0.4, -HALF, HALF],
+    ["z", HALF + 0.4, -HALF, HALF],
+  ] as const) {
+    const w = wall(axis, fixed, from, to, 1.0, "barrierMedium");
+    props.push(...w.props);
+    colliders.push(...w.colliders);
+  }
+
+  // Jump platforms (a loop) + a gentle walk-up ramp from the plaza.
+  for (const s of LOBBY_STEPS) {
+    colliders.push({ x: s.x, y: s.y - 0.5, z: s.z, hx: s.w / 2, hy: 0.5, hz: s.d / 2 });
+    props.push(...tileStep(s, "tileLarge_teamBlue"));
+  }
+  // Ramp: a tilted slab leading up off the plaza (showcases the pitch support).
+  const rampPitch = 0.3; // ~17 degrees
+  colliders.push({ x: -8, y: 0.5, z: 1, hx: 1.6, hy: 0.25, hz: 3.2, pitch: rampPitch });
+  props.push({ model: "tileSlopeLowMedium_teamBlue", x: -8, y: 0, z: 1, size: 3.4, pitch: rampPitch });
+
+  // Decor + a "warm up" flag.
+  props.push(
+    { model: "flag_teamYellow", x: 0, y: 0, z: -10, size: 2.2 },
+    { model: "tree_forest", x: -9, y: 0, z: -9, size: 3.5 },
+    { model: "tree_forest", x: 9, y: 0, z: 9, size: 3.5 },
+    { model: "plantA_forest", x: 9, y: 0, z: -9, size: 1.6 },
+    { model: "rocksB_forest", x: -9, y: 0, z: 9, size: 2 },
+  );
+
+  return {
+    id: "lobby",
+    props,
+    colliders,
+    spawns: [
+      { x: -2, y: SPAWN_Y, z: 6 },
+      { x: 2, y: SPAWN_Y, z: 6 },
+      { x: -2, y: SPAWN_Y, z: 8 },
+      { x: 2, y: SPAWN_Y, z: 8 },
+    ],
+    killY: -8,
+  };
+}
+
 /** All Variety prop basenames the game references — used to preload on the client. */
 export function allMapProps(): string[] {
-  const maps = [footballMap(), shootingMap(), climbMap(), gemsMap()];
+  const maps = [footballMap(), shootingMap(), climbMap(), gemsMap(), lobbyMap()];
   const set = new Set<string>();
   for (const m of maps) {
     for (const p of m.props) set.add(p.model);

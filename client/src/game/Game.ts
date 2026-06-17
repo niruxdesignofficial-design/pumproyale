@@ -263,8 +263,13 @@ export class Game {
 
     const st = this.net.room?.state as unknown as MatchStateView | undefined;
     if (st) {
-      const showMap = st.phase === "playing" || st.phase === "intro";
-      this.minigameViews.setMinigame(showMap && typeof st.minigame === "string" ? st.minigame : "");
+      // The lobby is a playable parkour while waiting; otherwise show the round map.
+      let view = "";
+      if (st.phase === "waiting") view = "lobby";
+      else if ((st.phase === "playing" || st.phase === "intro") && typeof st.minigame === "string") {
+        view = st.minigame;
+      }
+      this.minigameViews.setMinigame(view);
       this.minigameViews.update(
         dt,
         typeof st.roundClock === "number" ? st.roundClock : 0,

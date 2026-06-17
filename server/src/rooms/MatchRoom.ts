@@ -9,6 +9,7 @@ import {
   PLACE_POINTS,
   TICK_RATE,
   isValidCharacter,
+  lobbyMap,
   spawnPoint,
   type InputIntent,
   type JoinOptions,
@@ -17,18 +18,26 @@ import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { PlayerSim } from "../physics/PlayerSim";
 import { BotController } from "../ai/BotController";
 import { buildRoundPlan } from "../match/MinigameRegistry";
+import { buildMapColliders, removeColliders } from "../match/mapColliders";
 import type { IMinigame, MinigameContext } from "../match/IMinigame";
 import { recordMatchResult, type Participant } from "../services/leaderboard";
 import { EntityState, MatchState, PlayerState } from "./schema";
 
-/** Lobby fill window once the first human joins (seconds). */
-const FILL_WAIT = 8;
+/** Lobby fill window once the first human joins (seconds) — long enough to warm up. */
+const FILL_WAIT = 16;
 const COUNTDOWN = 4;
 const INTRO_TIME = 3.5;
 const END_SCREEN = 14;
 const MIN_HUMANS = 1;
 /** Generous cap above the ~30 Hz client send rate; excess input is dropped. */
 const MAX_INPUTS_PER_SECOND = 90;
+
+/** Human-looking usernames for bots so they read as real players. */
+const BOT_NAMES = [
+  "Lucas", "Mia", "Noah", "Zoe", "Leo", "Ava", "Max", "Emma", "Theo", "Lily",
+  "Hugo", "Nora", "Liam", "Sofia", "Ben", "Cleo", "Finn", "Ruby", "Kai", "Luna",
+  "Sam", "Ivy", "Dylan", "Maya", "Jack", "Nina", "Milo", "Ella", "Axel", "Vera",
+];
 
 type Phase = "waiting" | "countdown" | "intro" | "playing" | "ended";
 
@@ -51,6 +60,7 @@ export class MatchRoom extends Room<MatchState> {
   private readonly botOrder = new Map<string, number>();
   private ctx!: MinigameContext;
   private platformCollider: RAPIER.Collider | null = null;
+  private lobbyColliders: RAPIER.Collider[] = [];
   private bannerTimer = 0;
 
   private spawnCounter = 0;
@@ -71,7 +81,9 @@ export class MatchRoom extends Room<MatchState> {
     this.state.phase = "waiting";
 
     this.physics = await PhysicsWorld.create(PHYS.gravity, 1 / TICK_RATE);
-    this.setPlatformEnabled(true);
+    // The lobby is a small playable parkour while waiting for players.
+    this.setPlatformEnabled(false);
+    this.lobbyColliders = buildMapColliders(this.physics, lobbyMap());
 
     this.ctx = {
       physics: this.physics,
@@ -125,7 +137,9 @@ export class MatchRoom extends Room<MatchState> {
   }
 
   override onJoin(client: Client, options?: JoinOptions): void {
-    const spawn = spawnPoint(this.spawnCounter++, MAX_PLAYERS);
+    // Spawn humans on the lobby parkour (they can run it while waiting).
+    const lobbySpawns = lobbyMap().spawns;
+    const spawn = lobbySpawns[this.spawnCounter++ % lobbySpawns.length]!;
     this.sims.set(client.sessionId, new PlayerSim(this.physics, spawn));
 
     const player = new PlayerState();
@@ -283,6 +297,10 @@ export class MatchRoom extends Room<MatchState> {
     this.lock();
     this.autoDispose = false;
     this.matchClock = 0;
+    // Tear down the lobby parkour; restore the base platform for the countdown.
+    removeColliders(this.physics, this.lobbyColliders);
+    this.lobbyColliders = [];
+    this.setPlatformEnabled(true);
     while (this.sims.size < MAX_PLAYERS) this.addBot();
     this.roundPlan = buildRoundPlan(this.sims.size);
     this.state.roundCount = this.roundPlan.length;
@@ -407,7 +425,7 @@ export class MatchRoom extends Room<MatchState> {
     this.botOrder.set(id, this.botOrder.size);
 
     const player = new PlayerState();
-    player.name = `Bot-${this.botCounter}`;
+    player.name = this.pickBotName();
     player.isBot = true;
     player.character = CHARACTER_IDS[this.botCounter % CHARACTER_IDS.length]!;
     player.colorIndex = this.colorCounter++;
@@ -415,6 +433,16 @@ export class MatchRoom extends Room<MatchState> {
     player.y = spawn.y;
     player.z = spawn.z;
     this.state.players.set(id, player);
+  }
+
+  /** A human-looking name not already used by a player in this room. */
+  private pickBotName(): string {
+    const taken = new Set<string>();
+    this.state.players.forEach((p) => taken.add(p.name));
+    const free = BOT_NAMES.filter((n) => !taken.has(n));
+    if (free.length > 0) return free[Math.floor(Math.random() * free.length)]!;
+    const base = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)]!;
+    return `${base}${Math.floor(Math.random() * 90) + 10}`;
   }
 
   private clearEntities(): void {

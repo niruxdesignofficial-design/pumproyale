@@ -40,6 +40,8 @@ export class PlayerSim {
   private knockLock = 0;
   /** Seconds remaining of the one-shot "shoot/throw" animation. */
   private shootTimer = 0;
+  /** How long we've been trying to move while pinned (anti-stuck auto-hop). */
+  private stuckTimer = 0;
   bumperCooldown = 0;
 
   private faceX = 0;
@@ -67,7 +69,11 @@ export class PlayerSim {
 
     const colDesc = RAPIER.ColliderDesc.capsule(PHYS.capsuleHalfHeight, PHYS.capsuleRadius)
       .setFriction(0.4)
-      .setRestitution(0);
+      .setRestitution(0)
+      // Players collide with the world + ball (default group) but NOT with each
+      // other, so they can never wedge/stick on narrow platforms. Encoding:
+      // membership = group 0 (0x0001), filter = every group except 0 (0xFFFE).
+      .setCollisionGroups(0x0001fffe);
     this.collider = world.createCollider(colDesc, this.body);
   }
 
@@ -128,6 +134,22 @@ export class PlayerSim {
       const cur = this.body.linvel();
       this.body.setLinvel({ x: cur.x, y: PHYS.jumpSpeed, z: cur.z }, true);
       this.jumpQueued = false;
+    }
+
+    // Anti-stuck: if grounded and trying to move but pinned (a step lip, a corner),
+    // auto-hop after a short window so nobody ever gets wedged in place.
+    if (controlled) {
+      const trying = Math.hypot(this.input.moveX, this.input.moveZ) > 0.1;
+      const nv = this.body.linvel();
+      if (this.grounded && trying && Math.hypot(nv.x, nv.z) < 0.7) {
+        this.stuckTimer += dt;
+        if (this.stuckTimer > 0.35) {
+          this.body.setLinvel({ x: nv.x, y: PHYS.jumpSpeed * 0.7, z: nv.z }, true);
+          this.stuckTimer = 0;
+        }
+      } else {
+        this.stuckTimer = 0;
+      }
     }
 
     if (this.diveQueued && this.grounded && !this.diving && this.knockLock <= 0) {

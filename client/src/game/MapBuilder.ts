@@ -13,7 +13,9 @@ export function buildMapView(map: MinigameMap): THREE.Group {
     const obj = makeProp(p.model, p.size ?? 2, p.anchor ?? "bottom");
     if (!obj) continue;
     obj.position.set(p.x, p.y, p.z);
+    obj.rotation.order = "YXZ";
     obj.rotation.y = p.yaw ?? 0;
+    obj.rotation.x = p.pitch ?? 0;
     group.add(obj);
   }
   return group;

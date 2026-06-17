@@ -55,6 +55,9 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
   }
 
   const playing = state.matchPhase === "playing";
+  const isSoccer = /soccer|football/i.test(state.minigame);
+  const blueGoals = state.standings.find((s) => s.team === 0)?.roundScore ?? 0;
+  const redGoals = state.standings.find((s) => s.team === 1)?.roundScore ?? 0;
 
   return (
     <div className="hud">
@@ -90,7 +93,15 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
 
       {playing && state.banner && <div className="hud-banner">{state.banner}</div>}
 
-      {playing && state.minigame && (
+      {playing && isSoccer && (
+        <div className="hud-soccer">
+          <span style={{ color: "#4aa3ff" }}>Blue {Math.round(blueGoals)}</span>
+          <span style={{ opacity: 0.6 }}> &ndash; </span>
+          <span style={{ color: "#ff5a5a" }}>{Math.round(redGoals)} Red</span>
+        </div>
+      )}
+
+      {playing && state.minigame && !isSoccer && (
         <div className="hud-hint" style={{ top: 64, bottom: "auto" }}>
           {objective(state.minigame)}
         </div>
@@ -132,7 +143,7 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
         </div>
       )}
 
-      {(playing || state.matchPhase === "countdown") && (
+      {(playing || state.matchPhase === "countdown" || state.matchPhase === "waiting") && (
         <div className="hud-hint">
           WASD move &middot; Shift run &middot; Space jump &middot; E / click action
         </div>

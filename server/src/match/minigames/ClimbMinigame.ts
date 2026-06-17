@@ -33,7 +33,7 @@ interface Climber {
 export class ClimbMinigame implements IMinigame {
   readonly id = "climb";
   readonly name = "Tower Climb";
-  readonly maxDuration = 40;
+  readonly maxDuration = 60;
 
   private map: MinigameMap = climbMap();
   private colliders: RAPIER.Collider[] = [];
@@ -119,6 +119,9 @@ export class ClimbMinigame implements IMinigame {
       if (!c.finished && p.y >= CLIMB_FINISH_Y - 0.4 && this.onSummit(p.x, p.z)) {
         c.finished = true;
         ctx.setScore(id, FINISH_BASE - this.finishOrder);
+        const place = this.finishOrder + 1;
+        const name = ctx.state.players.get(id)?.name ?? "Someone";
+        ctx.setBanner(place === 1 ? `${name} reached the top first!` : `${name} finished #${place}`);
         this.finishOrder += 1;
       }
     }

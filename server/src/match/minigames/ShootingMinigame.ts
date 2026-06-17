@@ -11,8 +11,8 @@ interface Target {
   hidden: number;
 }
 
-/** Targets sit on the far side and face the shooters (toward -z). */
-const TARGET_YAW = Math.PI;
+/** Targets sit on the far side (-z) and face the shooters (who are at +z). */
+const TARGET_YAW = 0;
 /** Bot accuracy (chance a fired bot shot hits the target it aimed at). */
 const BOT_ACCURACY = 0.82;
 
@@ -184,6 +184,6 @@ export class ShootingMinigame implements IMinigame {
     this.botFire.set(id, t);
     const idx = ctx.botIndex(id);
     const tx = (idx - 1.5) * 4; // spread along the firing line
-    return { tx, tz: -7, action };
+    return { tx, tz: 6, action }; // hold the shooter line (near +z), fire on cadence
   }
 }
