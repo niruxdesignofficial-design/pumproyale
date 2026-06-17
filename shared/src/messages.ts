@@ -27,4 +27,6 @@ export interface JoinOptions {
   name?: string;
   /** Verified wallet public key (set from Phase 6 onward). */
   wallet?: string;
+  /** Chosen character id (see characters.ts). */
+  character?: string;
 }

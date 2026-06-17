@@ -14,25 +14,25 @@ export type AnimationState =
   | "lose";
 
 /**
- * Map from logical state to the exact clip name found inside
- * KayKit_AnimatedCharacter_v1.2.glb (verified by parsing the file).
+ * Map from logical state to the exact clip name in the shared KayKit Rig_Medium
+ * animation set (Rig_Medium_MovementBasic.glb + Rig_Medium_General.glb), which
+ * applies to every Adventurer character.
  *
- * The character only ships a subset of named clips, so a few logical states
- * reuse the closest available clip:
- *   - "fall" -> "Hop"   (no dedicated fall clip)
- *   - "dive" -> "Roll"
- *   - "hit"  -> "Block" (no dedicated getting-hit clip)
+ * A few logical states reuse the closest available clip:
+ *   - "fall" -> "Jump_Idle" (airborne loop; no dedicated fall clip)
+ *   - "dive" -> "Jump_Full_Long"
+ *   - "win"  -> "Interact"  (a celebratory gesture)
  *
  * Character loading also performs a case-insensitive substring match as a
- * resilience fallback, so renamed or repacked rigs still resolve.
+ * resilience fallback, so older rigs (e.g. PrototypePete) still resolve.
  */
 export const CLIP_NAMES: Record<AnimationState, string> = {
-  idle: "Idle",
-  run: "Run",
-  jump: "Jump",
-  fall: "Hop",
-  dive: "Roll",
-  hit: "Block",
-  win: "Cheer",
-  lose: "Defeat",
+  idle: "Idle_A",
+  run: "Running_A",
+  jump: "Jump_Idle",
+  fall: "Jump_Idle",
+  dive: "Jump_Full_Long",
+  hit: "Hit_A",
+  win: "Interact",
+  lose: "Death_A",
 };

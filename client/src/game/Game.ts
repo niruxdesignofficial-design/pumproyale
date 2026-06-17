@@ -12,7 +12,8 @@ import { createScene } from "./Scene";
 import { SafeZone } from "./SafeZone";
 import { MinigameViews } from "./MinigameViews";
 import { Avatar } from "./Avatar";
-import { loadCharacterGltf } from "./characterModel";
+import { getCharacterGltf, preloadCharacters } from "./characterModel";
+import { getSelectedCharacter } from "./selection";
 import { gameStore } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -30,6 +31,7 @@ interface MatchStateView {
 interface NetPlayer {
   name: string;
   wallet: string;
+  character: string;
   x: number;
   y: number;
   z: number;
@@ -57,7 +59,6 @@ export class Game {
   private readonly minigameViews: MinigameViews;
 
   private readonly avatars = new Map<string, Avatar>();
-  private gltf: Awaited<ReturnType<typeof loadCharacterGltf>> = null;
   private localId: string | null = null;
   private localAlive = true;
   private cameraSnapped = false;
@@ -84,13 +85,17 @@ export class Game {
   }
 
   async start(): Promise<void> {
-    this.gltf = await loadCharacterGltf();
+    await preloadCharacters();
     if (this.disposed) return;
 
     let room: Room;
     try {
       const wallet = getAuthWallet() ?? undefined;
-      room = await this.net.connect(defaultServerUrl(), { name: randomName(), wallet });
+      room = await this.net.connect(defaultServerUrl(), {
+        name: randomName(),
+        wallet,
+        character: getSelectedCharacter(),
+      });
     } catch (err) {
       console.error("[net] connection failed", err);
       gameStore.set({ status: "error", error: "Could not reach the game server." });
@@ -107,7 +112,7 @@ export class Game {
     this.input.attach();
     // Enable audio on the first user gesture (browsers block it before that).
     window.addEventListener("keydown", this.enableSound, { once: true });
-    gameStore.set({ status: "connected", usingFallback: this.gltf === null });
+    gameStore.set({ status: "connected", usingFallback: getCharacterGltf("knight") === null });
     this.loop.start();
   }
 
@@ -129,7 +134,7 @@ export class Game {
     const $ = getStateCallbacks(room);
 
     $(room.state).players?.onAdd((player: NetPlayer, sessionId: string) => {
-      const avatar = new Avatar(this.gltf, colorForId(sessionId));
+      const avatar = new Avatar(player.character, colorForId(sessionId));
       avatar.setTarget(player.x, player.y, player.z, player.yaw);
       avatar.setAnim(asAnim(player.anim));
       this.scene.add(avatar.object3d);

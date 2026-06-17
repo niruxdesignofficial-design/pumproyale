@@ -1,16 +1,19 @@
 import * as THREE from "three";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { CLIP_NAMES, FOOT_OFFSET, type AnimationState } from "@party-royale/shared";
+import { getCharacterGltf, getClips } from "./characterModel";
 
-const MODEL_YAW_OFFSET = Math.PI;
+// KayKit Adventurers are authored facing +Z, matching the server's
+// yaw = atan2(vx, vz), so no extra offset is needed (this fixes the old
+// "faces the camera when running forward" bug from the PrototypePete model).
+const MODEL_YAW_OFFSET = 0;
 const POS_LERP = 0.25;
 const YAW_LERP = 0.3;
 
 /**
- * A rendered player. Clones the shared KayKit GLTF (or a procedural fallback),
- * drives a per-instance AnimationMixer, and smoothly interpolates toward the
- * authoritative transforms streamed from the server.
+ * A rendered player: a cloned Adventurer driven by the shared Rig_Medium clips,
+ * with a colored ground ring to tell players apart, interpolated toward the
+ * authoritative server transforms.
  */
 export class Avatar {
   readonly object3d = new THREE.Group();
@@ -25,15 +28,27 @@ export class Avatar {
   private hasTarget = false;
   private readonly disposables: { dispose(): void }[] = [];
 
-  constructor(gltf: GLTF | null, color: number) {
+  constructor(characterId: string, ringColor: number) {
+    const gltf = getCharacterGltf(characterId);
     if (gltf) {
-      this.buildFromGltf(gltf, color);
+      const model = cloneSkeleton(gltf.scene);
+      model.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+        }
+      });
+      this.object3d.add(model);
+      this.clips = getClips();
+      this.mixer = new THREE.AnimationMixer(model);
+      this.setAnim("idle");
     } else {
-      this.buildFallback(color);
+      this.buildFallback(ringColor);
     }
+    this.addRing(ringColor);
   }
 
-  /** Update the interpolation target from an authoritative server transform. */
   setTarget(x: number, y: number, z: number, yaw: number): void {
     this.targetPos.set(x, y - FOOT_OFFSET, z);
     this.targetYaw = yaw + MODEL_YAW_OFFSET;
@@ -69,12 +84,10 @@ export class Avatar {
     this.mixer?.update(dt);
   }
 
-  /** Approximate world position (feet) for the camera to follow. */
   get position(): THREE.Vector3 {
     return this.object3d.position;
   }
 
-  /** Hide eliminated players (they have left the round). */
   setEliminated(eliminated: boolean): void {
     this.object3d.visible = !eliminated;
   }
@@ -85,49 +98,34 @@ export class Avatar {
     this.object3d.clear();
   }
 
-  private buildFromGltf(gltf: GLTF, color: number): void {
-    const model = cloneSkeleton(gltf.scene);
-    const tint = new THREE.Color(color);
-    model.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (mesh.isMesh) {
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        // Clone materials so each avatar can be tinted independently.
-        const mat = mesh.material;
-        if (Array.isArray(mat)) {
-          mesh.material = mat.map((m) => this.tintMaterial(m, tint));
-        } else {
-          mesh.material = this.tintMaterial(mat, tint);
-        }
-      }
+  private addRing(color: number): void {
+    const geo = new THREE.RingGeometry(0.32, 0.46, 28);
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
     });
-    this.object3d.add(model);
-    this.clips = gltf.animations;
-    this.mixer = new THREE.AnimationMixer(model);
-    this.setAnim("idle");
-  }
-
-  private tintMaterial(mat: THREE.Material, tint: THREE.Color): THREE.Material {
-    const cloned = mat.clone();
-    const std = cloned as THREE.MeshStandardMaterial;
-    if (std.color) std.color.lerp(tint, 0.5);
-    this.disposables.push(cloned);
-    return cloned;
+    const ring = new THREE.Mesh(geo, mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.03;
+    this.object3d.add(ring);
+    this.disposables.push(geo, mat);
   }
 
   private buildFallback(color: number): void {
-    const skin = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
     const bodyGeo = new THREE.CapsuleGeometry(0.3, 0.7, 6, 16);
-    const body = new THREE.Mesh(bodyGeo, skin);
+    const body = new THREE.Mesh(bodyGeo, mat);
     body.position.y = 0.8;
     body.castShadow = true;
     const headGeo = new THREE.SphereGeometry(0.26, 20, 14);
-    const head = new THREE.Mesh(headGeo, skin);
+    const head = new THREE.Mesh(headGeo, mat);
     head.position.y = 1.5;
     head.castShadow = true;
     this.object3d.add(body, head);
-    this.disposables.push(bodyGeo, headGeo, skin);
+    this.disposables.push(bodyGeo, headGeo, mat);
   }
 
   private resolveClip(state: AnimationState): THREE.AnimationClip | null {

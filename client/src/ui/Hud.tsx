@@ -6,7 +6,7 @@ import type { GameState } from "../game/store";
  * Heads-up display covering the whole match flow: connecting/error overlays, the
  * lobby fill timer, the countdown, the live round HUD, and the end screen.
  */
-export function Hud({ state }: { state: GameState }) {
+export function Hud({ state, onExit }: { state: GameState; onExit: () => void }) {
   if (state.status === "error") {
     return (
       <Overlay>
@@ -14,8 +14,8 @@ export function Hud({ state }: { state: GameState }) {
           {state.winnerName ? "Match over" : "Connection lost"}
         </div>
         <span>{state.error || "Could not reach the game server."}</span>
-        <button className="hud-button" onClick={() => window.location.reload()}>
-          Play again
+        <button className="hud-button" onClick={onExit}>
+          Back to menu
         </button>
         <span className="hud-dim">Make sure the server is running (`pnpm dev`).</span>
       </Overlay>
@@ -38,7 +38,7 @@ export function Hud({ state }: { state: GameState }) {
         <div className="hud-sub">
           {state.matchPhase === "playing" && state.minigame
             ? `Round ${state.round}: ${state.minigame}`
-            : "Phase 4 - elimination"}
+            : "Party Royale"}
         </div>
       </div>
 
@@ -94,7 +94,9 @@ export function Hud({ state }: { state: GameState }) {
               )}
             </>
           )}
-          <span className="hud-dim">Next match starting soon...</span>
+          <button className="hud-button" onClick={onExit}>
+            Back to menu
+          </button>
         </Overlay>
       )}
 

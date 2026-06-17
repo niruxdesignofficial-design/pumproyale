@@ -1,38 +1,58 @@
+import type * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
-import { getAsset } from "./AssetManifest";
+import { CHARACTERS, characterById } from "@party-royale/shared";
 
-let cached: Promise<GLTF | null> | null = null;
+// Shared animation clips (Rig_Medium) that apply to every Adventurer character.
+const ANIM_FILES = [
+  "/assets/animations/Rig_Medium_MovementBasic.glb",
+  "/assets/animations/Rig_Medium_General.glb",
+];
 
-/**
- * Loads the rigged KayKit character GLB once and caches it. Avatars clone this
- * shared GLTF (mesh + skeleton) and reuse its animation clips, so N players cost
- * one network fetch. Returns null if the asset is missing (pipeline not run), in
- * which case avatars fall back to a procedural placeholder.
- */
-export function loadCharacterGltf(): Promise<GLTF | null> {
-  if (!cached) cached = doLoad();
-  return cached;
+const loader = new GLTFLoader();
+
+const characterCache = new Map<string, GLTF | null>();
+let clips: THREE.AnimationClip[] = [];
+let preloaded: Promise<void> | null = null;
+
+/** Load all characters and the shared clip set once. Safe to call repeatedly. */
+export function preloadCharacters(): Promise<void> {
+  if (!preloaded) preloaded = doPreload();
+  return preloaded;
 }
 
-async function doLoad(): Promise<GLTF | null> {
-  const asset = getAsset("character.animated");
-  const loader = new GLTFLoader();
+async function doPreload(): Promise<void> {
+  const clipResults = await Promise.all(
+    ANIM_FILES.map((f) =>
+      loader.loadAsync(f).then(
+        (g) => g.animations,
+        (err) => {
+          console.warn("[character] animation load failed", f, err);
+          return [] as THREE.AnimationClip[];
+        },
+      ),
+    ),
+  );
+  clips = clipResults.flat();
 
-  // DRACO wired but optional; the Phase 1 asset is uncompressed so it never activates.
-  const draco = new DRACOLoader();
-  draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
-  loader.setDRACOLoader(draco);
+  await Promise.all(
+    CHARACTERS.map((c) =>
+      loader.loadAsync(c.file).then(
+        (g) => characterCache.set(c.id, g),
+        (err) => {
+          console.warn("[character] character load failed", c.file, err);
+          characterCache.set(c.id, null);
+        },
+      ),
+    ),
+  );
+}
 
-  try {
-    return await loader.loadAsync(asset.url);
-  } catch (err) {
-    console.warn(
-      "[character] could not load",
-      asset.url,
-      "- avatars will use a placeholder. Run `pnpm assets:prepare`.",
-      err,
-    );
-    return null;
-  }
+/** The loaded GLTF for a character id (null if it failed / not preloaded). */
+export function getCharacterGltf(id: string): GLTF | null {
+  return characterCache.get(characterById(id).id) ?? null;
+}
+
+/** The shared animation clips (empty until preloaded). */
+export function getClips(): THREE.AnimationClip[] {
+  return clips;
 }

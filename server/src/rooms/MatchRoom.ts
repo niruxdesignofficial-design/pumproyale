@@ -2,10 +2,12 @@ import { Room, type Client } from "@colyseus/core";
 import RAPIER from "@dimforge/rapier3d-compat";
 import {
   ARENA,
+  CHARACTER_IDS,
   INPUT_MESSAGE,
   MAX_PLAYERS,
   PHYS,
   TICK_RATE,
+  isValidCharacter,
   spawnPoint,
   type InputIntent,
   type JoinOptions,
@@ -92,6 +94,7 @@ export class MatchRoom extends Room<MatchState> {
     const player = new PlayerState();
     player.name = sanitizeName(options?.name) ?? `Player-${this.spawnCounter}`;
     player.wallet = typeof options?.wallet === "string" ? options.wallet.slice(0, 64) : "";
+    player.character = isValidCharacter(options?.character) ? options.character : "knight";
     player.x = spawn.x;
     player.y = spawn.y;
     player.z = spawn.z;
@@ -288,6 +291,7 @@ export class MatchRoom extends Room<MatchState> {
     const player = new PlayerState();
     player.name = `Bot-${this.botCounter}`;
     player.isBot = true;
+    player.character = CHARACTER_IDS[this.botCounter % CHARACTER_IDS.length]!;
     player.x = spawn.x;
     player.y = spawn.y;
     player.z = spawn.z;

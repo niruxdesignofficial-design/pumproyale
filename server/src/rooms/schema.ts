@@ -7,6 +7,7 @@ import { Schema, MapSchema, ArraySchema, defineTypes } from "@colyseus/schema";
 export class PlayerState extends Schema {
   name = "";
   wallet = "";
+  character = "knight";
   x = 0;
   y = 0;
   z = 0;
@@ -22,6 +23,7 @@ export class PlayerState extends Schema {
 defineTypes(PlayerState, {
   name: "string",
   wallet: "string",
+  character: "string",
   x: "number",
   y: "number",
   z: "number",

@@ -6,16 +6,15 @@ used anywhere in this project.
 
 ## KayKit packs
 
-| Pack                              | License | Status            | Source |
-| --------------------------------- | ------- | ----------------- | ------ |
-| KayKit Mini-Game Variety Pack 1.2 | CC0     | Present           | https://kaylousberg.itch.io/kay-kit-mini-game-variety-pack |
-| KayKit Character Animations 1.2   | CC0     | Present           | https://kaylousberg.itch.io/kaykit-animations |
-| KayKit Prototype Bits             | CC0     | Needed in Phase 2 | https://kaylousberg.itch.io/prototype-bits |
-| KayKit Platformer Pack            | CC0     | Needed in Phase 5 | https://kaylousberg.itch.io/kaykit-platformer |
+| Pack                              | License | Used for | Source |
+| --------------------------------- | ------- | -------- | ------ |
+| KayKit Adventurers                | CC0     | Playable characters (Knight, Barbarian, Mage, Rogue, Ranger) + shared Rig_Medium animations | https://kaylousberg.itch.io/kaykit-adventurers |
+| KayKit Platformer Pack            | CC0     | Minigame maps (floors, platforms, springs, beams, finish gates, flags) | https://kaylousberg.itch.io/kaykit-platformer |
+| KayKit Mini-Game Variety Pack 1.2 | CC0     | Props (crown/star, decoration) | https://kaylousberg.itch.io/kay-kit-mini-game-variety-pack |
+| KayKit Character Animations 1.2   | CC0     | Fallback character (PrototypePete) | https://kaylousberg.itch.io/kaykit-animations |
 
-"Present" packs are required for Phase 1 (rendering a character) and are already
-available locally. The other two are only needed in later phases (greybox level
-blocks and platformer obstacles) and can be downloaded then.
+All four packs are CC0 and live (gitignored) in `assets-source/`. `pnpm
+assets:prepare` copies only the files the game needs into `client/public/assets/`.
 
 ## Notes
 
