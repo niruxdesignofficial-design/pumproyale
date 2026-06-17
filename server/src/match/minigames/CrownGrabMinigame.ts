@@ -3,7 +3,8 @@ import { PHYS, crownGrabMap, sweeperHit, type GameMap } from "@party-royale/shar
 import type { IMinigame, MinigameContext, MinigameType } from "../IMinigame";
 import { buildMapColliders, removeColliders } from "../mapColliders";
 
-const CROWN_RADIUS = 1.8;
+const CROWN_RADIUS = 2.6;
+const SWEEP_KNOCK = 9;
 
 /**
  * Final: a short gauntlet past a guarding sweeper to a pedestal crown. The first
@@ -14,7 +15,7 @@ export class CrownGrabMinigame implements IMinigame {
   readonly id = "crowngrab";
   readonly name = "Crown Grab";
   readonly type: MinigameType = "final";
-  readonly maxDuration = 50;
+  readonly maxDuration = 40;
 
   private map: GameMap = crownGrabMap();
   private colliders: RAPIER.Collider[] = [];
@@ -53,7 +54,7 @@ export class CrownGrabMinigame implements IMinigame {
         for (const s of this.map.sweepers) {
           const hit = sweeperHit(s, t, p.x, p.z, PHYS.capsuleRadius);
           if (hit.hit) {
-            sim.applyKnockback(hit.nx, hit.nz, PHYS.knockStrength);
+            sim.applyKnockback(hit.nx, hit.nz, SWEEP_KNOCK);
             break;
           }
         }

@@ -107,24 +107,30 @@ export function sweeperHit(
 
 const SPAWN_Y = 2;
 
-/** Obstacle race down a beam-swept lane to a finish gate. */
+/** Obstacle race down a beam-swept lane to a finish gate. Side walls keep
+ * players on the track; sweepers leave side lanes you can dodge through. */
 export function beamRunMap(): GameMap {
-  const laneW = 9;
+  const laneHalf = 4.5;
+  const len = 44;
+  const cz = 0;
   return {
-    boxes: [{ type: "floor", cx: 0, cy: -0.25, cz: 2, w: laneW, h: 0.5, d: 48 }],
+    boxes: [
+      { type: "floor", cx: 0, cy: -0.25, cz, w: laneHalf * 2, h: 0.5, d: len },
+      { type: "wall", cx: -laneHalf - 0.2, cy: 0.75, cz, w: 0.4, h: 1.5, d: len },
+      { type: "wall", cx: laneHalf + 0.2, cy: 0.75, cz, w: 0.4, h: 1.5, d: len },
+    ],
     sweepers: [
-      { cx: 0, cz: -12, y: 0.9, reach: 4.6, thickness: 0.7, speed: 1.7, phase: 0 },
-      { cx: 0, cz: 0, y: 0.9, reach: 4.6, thickness: 0.7, speed: -2.0, phase: 1.2 },
-      { cx: 0, cz: 12, y: 0.9, reach: 4.6, thickness: 0.7, speed: 2.2, phase: 2.4 },
+      { cx: 0, cz: -8, y: 0.9, reach: 3.3, thickness: 0.7, speed: 1.6, phase: 0 },
+      { cx: 0, cz: 6, y: 0.9, reach: 3.3, thickness: 0.7, speed: -1.9, phase: 1.4 },
     ],
     springs: [
-      { x: -2.5, z: -6, y: 0, power: 12, r: 1.1 },
-      { x: 2.5, z: 7, y: 0, power: 12, r: 1.1 },
+      { x: -2.5, z: -2, y: 0, power: 12, r: 1.1 },
+      { x: 2.5, z: 12, y: 0, power: 12, r: 1.1 },
     ],
     decos: [
-      { prop: "signage_finish_wide", x: 0, y: 0, z: 22, rot: 0, scale: 1 },
-      { prop: "flag", x: -5, y: 0, z: 22, rot: 0, scale: 1 },
-      { prop: "flag", x: 5, y: 0, z: 22, rot: 0, scale: 1 },
+      { prop: "signage_finish_wide", x: 0, y: 0, z: 19, rot: 0, scale: 1 },
+      { prop: "flag", x: -5, y: 0, z: 19, rot: 0, scale: 1 },
+      { prop: "flag", x: 5, y: 0, z: 19, rot: 0, scale: 1 },
     ],
     spawns: [
       { x: -3, y: SPAWN_Y, z: -19 },
@@ -132,8 +138,8 @@ export function beamRunMap(): GameMap {
       { x: 1, y: SPAWN_Y, z: -19 },
       { x: 3, y: SPAWN_Y, z: -19 },
     ],
-    checkpoints: [-19, -6, 6],
-    finishZ: 21,
+    checkpoints: [-19, -4, 8],
+    finishZ: 17,
     crown: null,
     killY: -8,
   };
@@ -144,11 +150,13 @@ export function crownGrabMap(): GameMap {
   return {
     boxes: [
       { type: "floor", cx: 0, cy: -0.25, cz: 5, w: 8, h: 0.5, d: 26 },
-      { type: "platform", cx: 0, cy: 0.5, cz: 15, w: 4, h: 1.5, d: 4 },
+      { type: "wall", cx: -4.2, cy: 0.75, cz: 5, w: 0.4, h: 1.5, d: 26 },
+      { type: "wall", cx: 4.2, cy: 0.75, cz: 5, w: 0.4, h: 1.5, d: 26 },
+      { type: "platform", cx: 0, cy: 0.4, cz: 15, w: 3, h: 0.8, d: 3 },
     ],
-    sweepers: [{ cx: 0, cz: 4, y: 0.9, reach: 4.2, thickness: 0.8, speed: 2.3, phase: 0 }],
+    sweepers: [{ cx: 0, cz: 3, y: 0.9, reach: 3.1, thickness: 0.8, speed: 2.1, phase: 0 }],
     springs: [],
-    decos: [{ prop: "crown", x: 0, y: 1.7, z: 15, rot: 0, scale: 1.6 }],
+    decos: [{ prop: "crown", x: 0, y: 1.2, z: 15, rot: 0, scale: 1.6 }],
     spawns: [
       { x: -3, y: SPAWN_Y, z: -5 },
       { x: -1, y: SPAWN_Y, z: -5 },

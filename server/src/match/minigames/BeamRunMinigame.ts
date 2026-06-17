@@ -4,6 +4,8 @@ import type { IMinigame, MinigameContext, MinigameType } from "../IMinigame";
 import { buildMapColliders, removeColliders } from "../mapColliders";
 
 const SPRING_COOLDOWN = 0.6;
+const SWEEP_KNOCK = 8;
+const BOT_LANE = 3.6;
 
 /**
  * Obstacle race: cross the lane to the finish while rotating beams sweep you off
@@ -15,7 +17,7 @@ export class BeamRunMinigame implements IMinigame {
   readonly id = "beamrun";
   readonly name = "Beam Run";
   readonly type: MinigameType = "qualify";
-  readonly maxDuration = 70;
+  readonly maxDuration = 45;
 
   private map: GameMap = beamRunMap();
   private colliders: RAPIER.Collider[] = [];
@@ -58,7 +60,7 @@ export class BeamRunMinigame implements IMinigame {
         for (const s of this.map.sweepers) {
           const hit = sweeperHit(s, t, p.x, p.z, PHYS.capsuleRadius);
           if (hit.hit) {
-            sim.applyKnockback(hit.nx, hit.nz, PHYS.knockStrength);
+            sim.applyKnockback(hit.nx, hit.nz, SWEEP_KNOCK);
             break;
           }
         }
@@ -112,8 +114,10 @@ export class BeamRunMinigame implements IMinigame {
     ctx.setPlatformEnabled(true);
   }
 
-  botTarget(): { x: number; z: number } {
-    return { x: 0, z: (this.map.finishZ ?? 20) + 3 };
+  botTarget(id: string): { x: number; z: number } {
+    // Send bots up a side lane (beyond the sweepers' reach) so they reliably finish.
+    const side = id.charCodeAt(id.length - 1) % 2 === 0 ? BOT_LANE : -BOT_LANE;
+    return { x: side, z: (this.map.finishZ ?? 18) + 4 };
   }
 }
 

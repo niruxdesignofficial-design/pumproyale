@@ -5,9 +5,9 @@ Three.js rendering, a server-authoritative Colyseus + Rapier simulation, up to
 4-player matches that produce exactly one winner, an off-chain leaderboard, and a
 Solana (devnet) wallet sign-in with idempotent rewards.
 
-> Status: feature-complete across all 8 build phases. Single-winner matches with
-> three chained minigames, bots filling empty slots, wallet sign-in, leaderboard,
-> and devnet rewards.
+> Status: playable. Main menu and character select (5 animated KayKit
+> Adventurers), prop-built minigame maps, single-winner matches with chained
+> minigames and bots, wallet sign-in, leaderboard, and devnet rewards.
 
 ## Tech stack
 
@@ -41,8 +41,9 @@ pnpm install
 pnpm --filter @party-royale/server db:push
 
 # 3. Drop the KayKit packs into assets-source/ (CC0; not committed) and prepare:
-#      - KayKit Character Animations 1.2   (required)
-#      - KayKit Mini-Game Variety Pack 1.2 (required)
+#      - KayKit Adventurers          (required: playable characters + animations)
+#      - KayKit Platformer Pack      (required: minigame map props)
+#      - KayKit Mini-Game Variety    (crown prop)
 #    Layout does not matter; the pipeline scans recursively.
 pnpm assets:prepare
 
@@ -62,12 +63,19 @@ If you skip step 3, the client still runs but shows placeholder characters.
 
 ## How to play
 
-A match fills to 4 (bots take empty slots after a short timer), counts down, then
-runs three elimination rounds, one of each minigame, until a single winner remains:
+From the **main menu**, hit Play, pick one of the 5 **Adventurers** on the
+character-select screen, then Find match. A match fills to 4 (bots take empty
+slots after a short timer), counts down, then runs elimination rounds chosen by
+type (a qualifier, a survival round, then a final) until one winner remains:
 
-1. **Obstacle Race** - reach the finish past rotating hammers, sawblades, and a conveyor.
-2. **Hex Fall** - tiles dissolve as you stand on them; do not fall through.
-3. **Last One Standing** - survive a shrinking safe zone while bumpers shove you.
+- **Beam Run** (race) - run the wood course to the finish gate while rotating
+  beams sweep you and springs bounce you; fall off and respawn at a checkpoint.
+- **Hex Fall** (survival) - tiles dissolve as you stand on them; do not fall through.
+- **Sinking Island** (survival) - the tile island collapses ring by ring; stay on.
+- **Crown Grab** (final) - first to reach the pedestal crown wins instantly.
+
+Maps are built from the KayKit Platformer Pack; the match director never repeats
+a minigame within a match.
 
 | Input            | Action                        |
 | ---------------- | ----------------------------- |

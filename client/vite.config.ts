@@ -1,14 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
 
-// The shared workspace package is consumed as TypeScript source, so no extra
-// alias is needed: pnpm symlinks it into node_modules and Vite transpiles it.
+// @solana/web3.js and the wallet adapters expect Node globals (Buffer, process,
+// global) in the browser. The polyfill plugin provides them reliably.
 export default defineConfig({
-  plugins: [react()],
-  // @solana/web3.js and the wallet adapters expect a Node-style global.
-  define: {
-    global: "globalThis",
-  },
+  plugins: [
+    react(),
+    nodePolyfills({ globals: { Buffer: true, global: true, process: true } }),
+  ],
   server: {
     port: 5173,
     host: true,
