@@ -1,6 +1,6 @@
 import type RAPIER from "@dimforge/rapier3d-compat";
 import { SHOOTING, shootingMap, type MinigameMap } from "@party-royale/shared";
-import type { IMinigame, MinigameContext } from "../IMinigame";
+import type { BotPlan, IMinigame, MinigameContext } from "../IMinigame";
 import type { EntityState } from "../../rooms/schema";
 import { buildMapColliders, removeColliders } from "../mapColliders";
 
@@ -11,10 +11,15 @@ interface Target {
   hidden: number;
 }
 
+/** Targets sit on the far side and face the shooters (toward -z). */
+const TARGET_YAW = Math.PI;
+/** Bot accuracy (chance a fired bot shot hits the target it aimed at). */
+const BOT_ACCURACY = 0.82;
+
 /**
- * Shooting gallery. Face a target and press the action button to shoot it
- * (forgiving aim cone). Each hit scores a point and the target pops up
- * elsewhere. Most hits when time runs out wins the round.
+ * Shooting gallery. Players are sealed in the near zone by a tall barrier and
+ * shoot the targets (which face them) on the far side. Hits score; the target
+ * pops up elsewhere. Most hits in 40s wins the round.
  */
 export class ShootingMinigame implements IMinigame {
   readonly id = "shooting";
@@ -25,13 +30,13 @@ export class ShootingMinigame implements IMinigame {
   private colliders: RAPIER.Collider[] = [];
   private targets: Target[] = [];
   private readonly cooldown = new Map<string, number>();
-  private readonly botShot = new Map<string, number>();
+  private readonly botFire = new Map<string, number>();
   private elapsed = 0;
 
   setup(ctx: MinigameContext): void {
     this.elapsed = 0;
     this.cooldown.clear();
-    this.botShot.clear();
+    this.botFire.clear();
     this.map = shootingMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -47,15 +52,17 @@ export class ShootingMinigame implements IMinigame {
       entity.x = s.x;
       entity.y = SHOOTING.y;
       entity.z = s.z;
+      entity.yaw = TARGET_YAW;
       this.targets.push({ entity, spot, hidden: 0 });
     }
 
+    const ids = ctx.players();
     this.map.spawns.forEach((s, i) => {
-      const id = ctx.players()[i];
+      const id = ids[i];
       if (!id) return;
       const sim = ctx.sims.get(id);
       sim?.respawn(s);
-      sim?.setFacing(0, 1); // face the targets (far +z side) by default
+      sim?.setFacing(0, 1); // face the targets (far +z side)
     });
   }
 
@@ -72,29 +79,33 @@ export class ShootingMinigame implements IMinigame {
     for (const id of ctx.players()) {
       const cd = (this.cooldown.get(id) ?? 0) - dt;
       this.cooldown.set(id, Math.max(0, cd));
+      const isBot = ctx.state.players.get(id)?.isBot ?? false;
       if (cd > 0) {
-        ctx.consumeAction(id); // drop inputs during cooldown
+        ctx.consumeAction(id);
         continue;
       }
       if (!ctx.consumeAction(id)) continue;
       this.cooldown.set(id, SHOOTING.cooldown);
-      this.resolveShot(ctx, id);
+      this.resolveShot(ctx, id, isBot);
     }
-
-    // Respawn anyone who walks off the edge.
-    for (const id of ctx.players()) {
-      const sim = ctx.sims.get(id);
-      if (sim && sim.position.y < this.map.killY) sim.respawn();
-    }
-
-    for (const [id, t] of this.botShot) this.botShot.set(id, t - dt);
   }
 
-  private resolveShot(ctx: MinigameContext, id: string): void {
+  private resolveShot(ctx: MinigameContext, id: string, isBot: boolean): void {
     const sim = ctx.sims.get(id);
     if (!sim) return;
     sim.triggerShoot();
     const p = sim.position;
+
+    if (isBot) {
+      // Bots aim straight at the nearest visible target (skill-gated accuracy).
+      const t = this.nearestTarget(p.x, p.z);
+      if (!t) return;
+      sim.setFacing(t.entity.x - p.x, t.entity.z - p.z);
+      if (Math.random() < BOT_ACCURACY) this.hit(ctx, id, t);
+      return;
+    }
+
+    // Humans: forgiving aim cone around their facing direction.
     const f = ctx.facing(id);
     let best: Target | null = null;
     let bestDist = Infinity;
@@ -111,11 +122,27 @@ export class ShootingMinigame implements IMinigame {
         best = t;
       }
     }
-    if (best) {
-      ctx.addScore(id, 1);
-      best.entity.active = false;
-      best.hidden = 0.5;
+    if (best) this.hit(ctx, id, best);
+  }
+
+  private hit(ctx: MinigameContext, id: string, t: Target): void {
+    ctx.addScore(id, 1);
+    t.entity.active = false;
+    t.hidden = 0.5;
+  }
+
+  private nearestTarget(x: number, z: number): Target | null {
+    let best: Target | null = null;
+    let bestDist: number = SHOOTING.range;
+    for (const t of this.targets) {
+      if (t.hidden > 0) continue;
+      const d = Math.hypot(t.entity.x - x, t.entity.z - z);
+      if (d < bestDist) {
+        bestDist = d;
+        best = t;
+      }
     }
+    return best;
   }
 
   private relocate(t: Target): void {
@@ -124,6 +151,7 @@ export class ShootingMinigame implements IMinigame {
     const s = SHOOTING.spots[t.spot]!;
     t.entity.x = s.x;
     t.entity.z = s.z;
+    t.entity.yaw = TARGET_YAW;
     t.entity.active = true;
   }
 
@@ -145,26 +173,17 @@ export class ShootingMinigame implements IMinigame {
     ctx.setPlatformEnabled(true);
   }
 
-  /** Bots walk toward (and thus face) the nearest visible target so shots land. */
-  botTarget(id: string, ctx: MinigameContext): { x: number; z: number } {
-    const sim = ctx.sims.get(id);
-    if (!sim) return { x: 0, z: 4 };
-    let best = { x: 0, z: 4 };
-    let bestDist = Infinity;
-    for (const t of this.targets) {
-      if (t.hidden > 0) continue;
-      const d = Math.hypot(t.entity.x - sim.position.x, t.entity.z - sim.position.z);
-      if (d < bestDist) {
-        bestDist = d;
-        best = { x: t.entity.x, z: t.entity.z };
-      }
+  /** Bots hold a spread spot in the near zone and fire on a steady cadence. */
+  botPlan(id: string, ctx: MinigameContext, dt: number): BotPlan {
+    let t = (this.botFire.get(id) ?? 0) - dt;
+    let action = false;
+    if (t <= 0) {
+      action = true;
+      t = SHOOTING.cooldown + 0.1 + Math.random() * 0.3;
     }
-    return best;
-  }
-
-  botAction(id: string, _ctx: MinigameContext): boolean {
-    if ((this.botShot.get(id) ?? 0) > 0) return false;
-    this.botShot.set(id, 0.6 + Math.random() * 0.5);
-    return true;
+    this.botFire.set(id, t);
+    const idx = ctx.botIndex(id);
+    const tx = (idx - 1.5) * 4; // spread along the firing line
+    return { tx, tz: -7, action };
   }
 }

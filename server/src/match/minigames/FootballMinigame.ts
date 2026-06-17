@@ -1,46 +1,48 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { PHYS, footballMap, type GoalZone, type MinigameMap } from "@party-royale/shared";
-import type { IMinigame, MinigameContext } from "../IMinigame";
+import { SOCCER, footballMap, type GoalZone, type MinigameMap } from "@party-royale/shared";
+import type { BotPlan, IMinigame, MinigameContext } from "../IMinigame";
 import type { EntityState } from "../../rooms/schema";
 import { buildMapColliders, removeColliders } from "../mapColliders";
 
-const BALL_R = 0.55;
-const KICK_RANGE = 1.9;
-const KICK_POWER = 12;
-const KICK_UP = 3.2;
-const TOUCH_PAD = 0.4;
-/** Cap the ball speed so a hard kick can't tunnel through walls. */
-const MAX_BALL_SPEED = 24;
+const BALL_R = 0.5;
+const KICK_RANGE = 2.0;
+const KICK_POWER = 13;
+const KICK_UP = 3.0;
+const MAX_BALL_SPEED = 26;
+
+/** Enemy goal z for a team (team 0 Blue attacks +z, team 1 Red attacks -z). */
+function enemyGoalZ(team: number): number {
+  return team === 0 ? SOCCER.halfZ : -SOCCER.halfZ;
+}
+function ownGoalZ(team: number): number {
+  return team === 0 ? -SOCCER.halfZ : SOCCER.halfZ;
+}
 
 /**
- * 4-way soccer. A realistic dynamic ball you push by running into it and kick
- * with the action button. Each player owns the goal they spawn in front of;
- * putting the ball into ANOTHER player's goal scores a point for whoever last
- * touched it (own goal counts for nobody). A tall invisible wall keeps the ball
- * in. Most goals when time runs out wins the round.
+ * 2v2 soccer. Team 0 (Blue) defends -z, team 1 (Red) defends +z. The ball in a
+ * team's own net scores for the OTHER team (own goals included). Both teammates
+ * share the team score, so they get equal points. A realistic ball + a tall
+ * invisible wall keep play contained. Most team goals in 35s wins the round.
  */
 export class FootballMinigame implements IMinigame {
   readonly id = "football";
   readonly name = "Soccer Scramble";
-  readonly maxDuration = 55;
+  readonly maxDuration = 35;
 
   private map: MinigameMap = footballMap();
   private colliders: RAPIER.Collider[] = [];
   private ballBody: RAPIER.RigidBody | null = null;
   private ballCollider: RAPIER.Collider | null = null;
   private ballEntity: EntityState | null = null;
-  private lastTouch: string | null = null;
   private resetTimer = 0;
   private elapsed = 0;
-  private readonly ownerIds: (string | undefined)[] = [];
-  private readonly botKick = new Map<string, number>();
+  private readonly teamGoals = [0, 0];
 
   setup(ctx: MinigameContext): void {
     this.elapsed = 0;
-    this.lastTouch = null;
     this.resetTimer = 0;
-    this.botKick.clear();
-    this.ownerIds.length = 0;
+    this.teamGoals[0] = 0;
+    this.teamGoals[1] = 0;
     this.map = footballMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -49,21 +51,25 @@ export class FootballMinigame implements IMinigame {
     const ids = ctx.players();
     this.map.spawns.forEach((s, i) => {
       const id = ids[i];
-      if (id) ctx.sims.get(id)?.respawn(s);
+      if (!id) return;
+      const sim = ctx.sims.get(id);
+      sim?.respawn(s);
+      const team = i % 2;
+      const p = ctx.state.players.get(id);
+      if (p) p.team = team;
+      sim?.setFacing(0, team === 0 ? 1 : -1); // face the enemy half
     });
-    // Goal i is owned by the player who spawned in front of it (spawn index i).
-    (this.map.goals ?? []).forEach((g) => (this.ownerIds[g.owner] = ids[g.owner]));
 
     const world = ctx.physics.world;
     this.ballBody = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(0, BALL_R + 0.2, 0)
-        .setLinearDamping(0.15)
-        .setAngularDamping(0.25)
+        .setLinearDamping(0.12)
+        .setAngularDamping(0.2)
         .setCcdEnabled(true),
     );
     this.ballCollider = world.createCollider(
-      RAPIER.ColliderDesc.ball(BALL_R).setRestitution(0.55).setFriction(0.5).setDensity(0.8),
+      RAPIER.ColliderDesc.ball(BALL_R).setRestitution(0.55).setFriction(0.5).setDensity(0.7),
       this.ballBody,
     );
     this.ballEntity = ctx.addEntity("ball", 1);
@@ -80,7 +86,7 @@ export class FootballMinigame implements IMinigame {
       if (this.resetTimer <= 0) this.resetBall();
     }
 
-    // Clamp ball speed (anti-tunnel) while keeping its direction.
+    // Speed cap (anti-tunnel).
     const lv = body.linvel();
     const speed = Math.hypot(lv.x, lv.y, lv.z);
     if (speed > MAX_BALL_SPEED) {
@@ -90,31 +96,32 @@ export class FootballMinigame implements IMinigame {
 
     const bp = body.translation();
 
-    // Track last toucher and let kicks fling the ball.
+    // Players push by contact; kicks fling the ball in their facing direction.
     for (const id of ctx.players()) {
       const sim = ctx.sims.get(id);
       if (!sim) continue;
       const p = sim.position;
-      const dx = bp.x - p.x;
-      const dz = bp.z - p.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist <= PHYS.capsuleRadius + BALL_R + TOUCH_PAD) this.lastTouch = id;
+      const dist = Math.hypot(bp.x - p.x, bp.z - p.z);
       if (dist <= KICK_RANGE && ctx.consumeAction(id)) {
         const f = ctx.facing(id);
         body.applyImpulse({ x: f.x * KICK_POWER, y: KICK_UP, z: f.z * KICK_POWER }, true);
-        this.lastTouch = id;
       }
     }
 
-    // Goals: scoring in someone else's goal scores for the last toucher.
+    // Goals: the ball in a team's net scores for the OTHER team.
     if (this.resetTimer <= 0 && this.map.goals) {
-      this.map.goals.forEach((g, i) => {
-        if (this.resetTimer > 0 || !inZone(bp, g)) return;
-        const owner = this.ownerIds[i];
-        if (this.lastTouch && this.lastTouch !== owner) ctx.addScore(this.lastTouch, 1);
-        this.resetTimer = 1.0;
+      for (const g of this.map.goals) {
+        if (!inZone(bp, g)) continue;
+        const scoringTeam = 1 - g.owner;
+        this.teamGoals[scoringTeam] = (this.teamGoals[scoringTeam] ?? 0) + 1;
+        this.applyTeamScores(ctx);
+        ctx.setBanner(
+          `GOAL!   Blue ${this.teamGoals[0]}  -  ${this.teamGoals[1]} Red`,
+        );
+        this.resetTimer = 1.2;
         body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      });
+        break;
+      }
     }
 
     if (bp.y < this.map.killY) this.resetBall();
@@ -125,10 +132,18 @@ export class FootballMinigame implements IMinigame {
 
     for (const id of ctx.players()) {
       const sim = ctx.sims.get(id);
-      if (sim && sim.position.y < this.map.killY) sim.respawn();
+      if (sim && sim.position.y < this.map.killY) {
+        const i = ctx.players().indexOf(id);
+        sim.respawn(this.map.spawns[i % this.map.spawns.length]);
+      }
     }
+  }
 
-    for (const [id, t] of this.botKick) this.botKick.set(id, t - dt);
+  private applyTeamScores(ctx: MinigameContext): void {
+    for (const id of ctx.players()) {
+      const p = ctx.state.players.get(id);
+      if (p && (p.team === 0 || p.team === 1)) ctx.setScore(id, this.teamGoals[p.team] ?? 0);
+    }
   }
 
   private resetBall(): void {
@@ -154,20 +169,43 @@ export class FootballMinigame implements IMinigame {
     ctx.setPlatformEnabled(true);
   }
 
-  botTarget(_id: string): { x: number; z: number } {
-    const bp = this.ballBody?.translation();
-    return bp ? { x: bp.x, z: bp.z } : { x: 0, z: 0 };
-  }
-
-  botAction(id: string, ctx: MinigameContext): boolean {
-    const bp = this.ballBody?.translation();
+  /** Smart soccer bot: line up behind the ball, then charge it toward the goal. */
+  botPlan(id: string, ctx: MinigameContext): BotPlan {
     const sim = ctx.sims.get(id);
-    if (!bp || !sim) return false;
-    const dist = Math.hypot(bp.x - sim.position.x, bp.z - sim.position.z);
-    if (dist > KICK_RANGE) return false;
-    if ((this.botKick.get(id) ?? 0) > 0) return false;
-    this.botKick.set(id, 0.8);
-    return true;
+    const bp = this.ballBody?.translation();
+    const team = ctx.state.players.get(id)?.team ?? 0;
+    if (!sim || !bp) return { tx: 0, tz: 0 };
+    const p = sim.position;
+    const eGoal = enemyGoalZ(team);
+    const oGoal = ownGoalZ(team);
+
+    const ballDist = Math.hypot(bp.x - p.x, bp.z - p.z);
+    const ballInOwnHalf = team === 0 ? bp.z < -2 : bp.z > 2;
+    const support = ctx.botIndex(id) % 2 === 1;
+
+    // Defender (or supporter while the ball is in our half): sit between ball and goal.
+    if (ballInOwnHalf && (support || ballDist > 8)) {
+      return { tx: bp.x * 0.5, tz: (bp.z + oGoal) / 2 };
+    }
+
+    // Direction from the ball toward the goal mouth (x = 0).
+    const tgx = 0 - bp.x;
+    const tgz = eGoal - bp.z;
+    const gl = Math.hypot(tgx, tgz) || 1;
+    const ngx = tgx / gl;
+    const ngz = tgz / gl;
+
+    // Are we already behind the ball (on the side away from the goal)? If so,
+    // charge THROUGH the ball toward the goal (kicking sends it goalward).
+    const bx = bp.x - p.x;
+    const bz = bp.z - p.z;
+    const bl = Math.hypot(bx, bz) || 1;
+    const aligned = (bx / bl) * ngx + (bz / bl) * ngz > 0.35;
+    if (aligned) {
+      return { tx: 0, tz: eGoal, action: ballDist <= KICK_RANGE + 0.3 };
+    }
+    // Otherwise circle to the spot behind the ball relative to the goal.
+    return { tx: bp.x - ngx * 1.8, tz: bp.z - ngz * 1.8 };
   }
 }
 

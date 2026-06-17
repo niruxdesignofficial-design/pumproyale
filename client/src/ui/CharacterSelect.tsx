@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { CHARACTERS } from "@party-royale/shared";
 import { setSelectedCharacter } from "../game/selection";
+import { sound } from "../core/Sound";
 import { CharacterPreview } from "./CharacterPreview";
 
 /** Character-select screen: pick one of the Adventurers, then find a match. */
@@ -15,7 +16,13 @@ export function CharacterSelect({
 
   const confirm = () => {
     setSelectedCharacter(selected);
+    sound.play("confirm");
     onConfirm();
+  };
+
+  const back = () => {
+    sound.play("back");
+    onBack();
   };
 
   return (
@@ -32,7 +39,10 @@ export function CharacterSelect({
             key={c.id}
             className={`char-card${c.id === selected ? " active" : ""}`}
             style={{ "--accent": `#${c.accent.toString(16).padStart(6, "0")}` } as CSSProperties}
-            onClick={() => setSelected(c.id)}
+            onClick={() => {
+              sound.play("hover");
+              setSelected(c.id);
+            }}
           >
             <span className="char-swatch" />
             {c.name}
@@ -41,7 +51,7 @@ export function CharacterSelect({
       </div>
 
       <div className="screen-actions">
-        <button className="btn-secondary" onClick={onBack}>
+        <button className="btn-secondary" onClick={back}>
           Back
         </button>
         <button className="btn-primary" onClick={confirm}>

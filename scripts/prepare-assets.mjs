@@ -19,6 +19,41 @@ const repoRoot = path.resolve(__dirname, "..");
 const sourceDir = path.resolve(repoRoot, process.env.ASSETS_SOURCE ?? "assets-source");
 const outDir = path.resolve(repoRoot, "client/public/assets");
 
+/** Candidate roots that may hold the Kenney "IU Y AUDIO" UI + audio packs. */
+const UI_ROOTS = [
+  process.env.UI_ASSETS,
+  path.join(sourceDir, "IU Y AUDIO"),
+  path.resolve(repoRoot, "../assets game/IU Y AUDIO"),
+].filter(Boolean);
+
+/**
+ * Curated UI/audio files (Kenney, CC0) copied into client/public/assets. Only the
+ * handful the game actually uses — fonts, medals, an icon, and a small SFX set.
+ */
+const UI_FILES = [
+  { src: "kenney_ui-pack/Font/Kenney Future.ttf", out: "fonts/KenneyFuture.ttf" },
+  { src: "kenney_ui-pack/Font/Kenney Future Narrow.ttf", out: "fonts/KenneyFutureNarrow.ttf" },
+  { src: "kenney_medals/PNG/flat_medal1.png", out: "medals/gold.png" },
+  { src: "kenney_medals/PNG/flat_medal2.png", out: "medals/silver.png" },
+  { src: "kenney_medals/PNG/flat_medal3.png", out: "medals/bronze.png" },
+  { src: "kenney_board-game-icons/PNG/Default (64px)/crown_a.png", out: "icons/crown.png" },
+  { src: "kenney_board-game-icons/PNG/Default (64px)/award.png", out: "icons/award.png" },
+  // UI SFX.
+  { src: "kenney_interface-sounds/Audio/click_001.ogg", out: "audio/click.ogg" },
+  { src: "kenney_interface-sounds/Audio/back_001.ogg", out: "audio/back.ogg" },
+  { src: "kenney_interface-sounds/Audio/confirmation_001.ogg", out: "audio/confirm.ogg" },
+  { src: "kenney_interface-sounds/Audio/error_001.ogg", out: "audio/error.ogg" },
+  { src: "kenney_interface-sounds/Audio/select_001.ogg", out: "audio/hover.ogg" },
+  { src: "kenney_interface-sounds/Audio/tick_001.ogg", out: "audio/tick.ogg" },
+  // Gameplay SFX (mapped from the interface set).
+  { src: "kenney_interface-sounds/Audio/confirmation_002.ogg", out: "audio/goal.ogg" },
+  { src: "kenney_interface-sounds/Audio/select_003.ogg", out: "audio/pickup.ogg" },
+  { src: "kenney_interface-sounds/Audio/click_004.ogg", out: "audio/shoot.ogg" },
+  { src: "kenney_interface-sounds/Audio/confirmation_003.ogg", out: "audio/win.ogg" },
+  { src: "kenney_interface-sounds/Audio/error_002.ogg", out: "audio/lose.ogg" },
+  { src: "kenney_interface-sounds/Audio/confirmation_004.ogg", out: "audio/go.ogg" },
+];
+
 /** Single self-contained GLB files, matched by lowercased basename. */
 const FILE_TARGETS = [
   // KayKit Adventurers (rigged, Rig_Medium).
@@ -147,8 +182,39 @@ async function main() {
     copied += 1;
   }
 
+  // Curated UI + audio (Kenney "IU Y AUDIO" packs).
+  const uiRoot = await firstExistingDir(UI_ROOTS);
+  if (!uiRoot) {
+    console.log(`[assets] skip: UI/audio packs not found (looked in ${UI_ROOTS.join(", ")})`);
+  } else {
+    let uiCopied = 0;
+    for (const f of UI_FILES) {
+      const src = path.join(uiRoot, f.src);
+      try {
+        const dest = path.join(outDir, f.out);
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.copyFile(src, dest);
+        uiCopied += 1;
+      } catch {
+        console.log(`[assets] skip: UI file not found -> ${f.out} (${f.src})`);
+      }
+    }
+    console.log(`[assets] copied ${uiCopied}/${UI_FILES.length} UI/audio files from ${uiRoot}`);
+  }
+
   console.log(`[assets] done: ${copied} targets copied, ${missingRequired} required missing`);
   if (missingRequired > 0) process.exitCode = 1;
+}
+
+async function firstExistingDir(candidates) {
+  for (const c of candidates) {
+    const ok = await fs
+      .stat(c)
+      .then((s) => s.isDirectory())
+      .catch(() => false);
+    if (ok) return c;
+  }
+  return null;
 }
 
 main().catch((err) => {

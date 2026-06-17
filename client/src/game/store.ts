@@ -11,6 +11,7 @@ export interface Standing {
   readonly points: number;
   readonly roundScore: number;
   readonly colorIndex: number;
+  readonly team: number;
   readonly isLocal: boolean;
   readonly isBot: boolean;
 }
@@ -30,6 +31,8 @@ export interface GameState {
   readonly alivePlayers: number;
   // Scoreboard (points-based; highest total wins).
   readonly standings: readonly Standing[];
+  // Transient banner (e.g. "GOAL! Blue 2 - 1 Red").
+  readonly banner: string;
   // Local player.
   readonly localAlive: boolean;
   readonly localPlacement: number;
@@ -50,6 +53,7 @@ const INITIAL: GameState = {
   timer: 0,
   alivePlayers: 0,
   standings: [],
+  banner: "",
   localAlive: true,
   localPlacement: 0,
   isLocalWinner: false,

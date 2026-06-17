@@ -15,6 +15,7 @@ import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
 import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
+import { getPlayerName } from "./name";
 import { gameStore, type Standing } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -57,6 +58,14 @@ interface NetPlayer {
   placement: number;
   points: number;
   roundScore: number;
+  team: number;
+}
+
+/** Ground-ring color for a player: team color in team rounds, else candy color. */
+function ringColorFor(team: number, colorIndex: number): number {
+  if (team === 0) return 0x4aa3ff; // Blue
+  if (team === 1) return 0xff5a5a; // Red
+  return teamColor(colorIndex);
 }
 
 /**
@@ -79,6 +88,9 @@ export class Game {
   private localId: string | null = null;
   private cameraSnapped = false;
   private standingsSig = "";
+  private matchPhase = "";
+  private currentMinigame = "";
+  private localRoundScore = 0;
 
   private disposed = false;
   private seq = 0;
@@ -111,7 +123,7 @@ export class Game {
     try {
       const wallet = getAuthWallet() ?? undefined;
       room = await this.net.connect(defaultServerUrl(), {
-        name: randomName(),
+        name: getPlayerName() || randomName(),
         wallet,
         character: getSelectedCharacter(),
       });
@@ -172,16 +184,26 @@ export class Game {
       }
 
       let lastAnim = player.anim;
+      let lastTeam = NaN;
       $(player).onChange(() => {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
         const anim = asAnim(player.anim);
         // Cosmetic shot tracer when a player starts the shoot animation.
         if (anim === "shoot" && lastAnim !== "shoot") {
           this.spawnTracer(avatar.position, player.yaw);
+          if (sessionId === this.localId) sound.play("shoot");
         }
         lastAnim = player.anim;
         avatar.setAnim(anim);
+        if (player.team !== lastTeam) {
+          lastTeam = player.team;
+          avatar.setRingColor(ringColorFor(player.team, player.colorIndex));
+        }
         if (sessionId === this.localId) {
+          if (player.roundScore > this.localRoundScore && /gem/i.test(this.currentMinigame)) {
+            sound.play("pickup");
+          }
+          this.localRoundScore = player.roundScore;
           gameStore.set({ localPlacement: player.placement });
         }
       });
@@ -198,12 +220,26 @@ export class Game {
     });
 
     const s = $(room.state);
-    s.listen?.("phase", (v: string) => gameStore.set({ matchPhase: v }));
+    s.listen?.("phase", (v: string) => {
+      this.matchPhase = v;
+      gameStore.set({ matchPhase: v });
+      if (v === "playing") sound.play("go");
+    });
     s.listen?.("round", (v: number) => gameStore.set({ round: v }));
     s.listen?.("roundCount", (v: number) => gameStore.set({ roundCount: v }));
-    s.listen?.("minigame", (v: string) => gameStore.set({ minigame: v }));
-    s.listen?.("timer", (v: number) => gameStore.set({ timer: v }));
+    s.listen?.("minigame", (v: string) => {
+      this.currentMinigame = v;
+      gameStore.set({ minigame: v });
+    });
+    s.listen?.("timer", (v: number) => {
+      if (this.matchPhase === "countdown" && v > 0) sound.play("tick");
+      gameStore.set({ timer: v });
+    });
     s.listen?.("alive", (v: number) => gameStore.set({ alivePlayers: v }));
+    s.listen?.("banner", (v: string) => {
+      if (v && /goal/i.test(v)) sound.play("goal");
+      gameStore.set({ banner: v });
+    });
     s.listen?.("winnerName", (v: string) => gameStore.set({ winnerName: v }));
     s.listen?.("winnerId", (v: string) => {
       const isLocal = v.length > 0 && v === this.localId;
@@ -271,12 +307,13 @@ export class Game {
         points: p.points,
         roundScore: p.roundScore,
         colorIndex: p.colorIndex,
+        team: p.team,
         isLocal: id === this.localId,
         isBot: p.isBot,
       });
     });
     list.sort((a, b) => b.points - a.points || b.roundScore - a.roundScore);
-    const sig = list.map((x) => `${x.id}:${x.points}:${x.roundScore}`).join("|");
+    const sig = list.map((x) => `${x.id}:${x.points}:${x.roundScore}:${x.team}`).join("|");
     if (sig === this.standingsSig) return;
     this.standingsSig = sig;
     gameStore.set({ standings: list });

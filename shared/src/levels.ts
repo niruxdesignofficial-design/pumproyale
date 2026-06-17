@@ -82,6 +82,32 @@ export interface MapHazard {
   yaw?: number;
 }
 
+/**
+ * A side barrel that periodically launches a ball straight across the path. The
+ * ball's position is a deterministic function of the synced round clock, so the
+ * client renders it and the server resolves knockback without a physics body.
+ */
+export interface MapLauncher {
+  /** Barrel position (the launch origin). */
+  x: number;
+  y: number;
+  z: number;
+  /** Unit travel direction (dx,dz) the ball rolls along. */
+  dx: number;
+  dz: number;
+  /** Ball speed (units/s) and how far it travels before looping. */
+  speed: number;
+  range: number;
+  /** Seconds between launches (one ball in flight at a time). */
+  interval: number;
+  /** Phase offset (s) so barrels do not all fire together. */
+  phase: number;
+  ballR: number;
+  /** Barrel + ball prop basenames. */
+  model: string;
+  ballModel: string;
+}
+
 export interface MinigameMap {
   id: string;
   props: MapProp[];
@@ -94,6 +120,21 @@ export interface MinigameMap {
   sweepers?: MapSweeper[];
   /** Stationary proximity hazards (spike rollers). */
   hazards?: MapHazard[];
+  /** Side barrels that launch rolling balls (deterministic from round clock). */
+  launchers?: MapLauncher[];
+}
+
+/**
+ * The active ball position for a launcher at time t (since round start), or null
+ * while the barrel is between launches. Looping: a ball travels `range` then the
+ * barrel reloads for the rest of `interval`.
+ */
+export function launcherBall(l: MapLauncher, t: number): { x: number; y: number; z: number } | null {
+  const flight = l.range / l.speed;
+  const local = (t + l.phase) % l.interval;
+  if (local > flight) return null; // reloading
+  const d = local * l.speed;
+  return { x: l.x + l.dx * d, y: l.y, z: l.z + l.dz * d };
 }
 
 const SPAWN_Y = 2;
@@ -201,47 +242,55 @@ function wall(
   return { props, colliders };
 }
 
-// --- Soccer -----------------------------------------------------------------
+// --- Soccer (2v2) -----------------------------------------------------------
+
+/** Soccer is 2 teams of 2: team 0 = Blue, team 1 = Red. */
+export const SOCCER = {
+  halfX: 8,
+  halfZ: 12,
+  goalHalf: 3,
+  wallH: 3,
+} as const;
 
 /**
- * 4-way soccer pitch: a square arena with one goal per player on each edge, a
- * dynamic ball, and a TALL invisible perimeter wall (only the goal mouths are
- * open) so the ball can never leave. Each goal is owned by the player who spawns
- * in front of it; scoring in another player's goal scores for the scorer (own
- * goal = nothing). Owner index == goal index == spawn index.
+ * 2v2 soccer pitch: a rectangle with one goal per team at each end (Blue at -z,
+ * Red at +z) and a TALL invisible perimeter wall (only the goal mouths open) so
+ * the ball can never leave. The ball in a team's own net scores for the OTHER
+ * team. GoalZone.owner = the team that DEFENDS that goal.
  */
 export function footballMap(): MinigameMap {
-  const HALF = 10;
-  const GOAL_HALF = 3;
-  const WALL_H = 3; // tall (mostly invisible above the low barrier props)
-  const props: MapProp[] = floorTiles("tileLarge_forest", 5, 5, 4);
-  const colliders: MapCollider[] = [floorCollider(HALF, HALF)];
+  const { halfX, halfZ, goalHalf, wallH } = SOCCER;
+  const props: MapProp[] = floorTiles(
+    (_c, r) => (r < 3 ? "tileLarge_teamBlue" : "tileLarge_teamRed"),
+    4,
+    6,
+    4,
+  );
+  const colliders: MapCollider[] = [floorCollider(halfX, halfZ)];
 
-  // Goals: south(0), north(1), west(2), east(3), each opening into the pitch.
+  // Goals at each end (open into the pitch) + team flags for clear identity.
   props.push(
-    { model: "gateLargeWide_teamBlue", x: 0, y: 0, z: -HALF, yaw: 0, size: 7 },
-    { model: "gateLargeWide_teamRed", x: 0, y: 0, z: HALF, yaw: Math.PI, size: 7 },
-    { model: "gateLargeWide_teamYellow", x: -HALF, y: 0, z: 0, yaw: Math.PI / 2, size: 7 },
-    { model: "gateLargeWide_teamBlue", x: HALF, y: 0, z: 0, yaw: -Math.PI / 2, size: 7 },
+    { model: "gateLargeWide_teamBlue", x: 0, y: 0, z: -halfZ, yaw: 0, size: 7 },
+    { model: "gateLargeWide_teamRed", x: 0, y: 0, z: halfZ, yaw: Math.PI, size: 7 },
+    { model: "flag_teamBlue", x: -goalHalf - 0.5, y: 0, z: -halfZ + 0.5, size: 1.8 },
+    { model: "flag_teamBlue", x: goalHalf + 0.5, y: 0, z: -halfZ + 0.5, size: 1.8 },
+    { model: "flag_teamRed", x: -goalHalf - 0.5, y: 0, z: halfZ - 0.5, size: 1.8 },
+    { model: "flag_teamRed", x: goalHalf + 0.5, y: 0, z: halfZ - 0.5, size: 1.8 },
   );
 
-  // Tall invisible perimeter: each edge has two wall segments flanking its goal mouth.
-  for (const z of [-HALF - 0.4, HALF + 0.4]) {
-    for (const seg of [
-      [-HALF, -GOAL_HALF],
-      [GOAL_HALF, HALF],
-    ] as const) {
-      const w = wall("z", z, seg[0], seg[1], WALL_H, "barrierLarge");
-      props.push(...w.props);
-      colliders.push(...w.colliders);
-    }
+  // Tall invisible side walls (full length).
+  for (const x of [-halfX - 0.4, halfX + 0.4]) {
+    const w = wall("x", x, -halfZ, halfZ, wallH, "barrierLarge");
+    props.push(...w.props);
+    colliders.push(...w.colliders);
   }
-  for (const x of [-HALF - 0.4, HALF + 0.4]) {
+  // End walls flanking each goal mouth.
+  for (const z of [-halfZ - 0.4, halfZ + 0.4]) {
     for (const seg of [
-      [-HALF, -GOAL_HALF],
-      [GOAL_HALF, HALF],
+      [-halfX, -goalHalf],
+      [goalHalf, halfX],
     ] as const) {
-      const w = wall("x", x, seg[0], seg[1], WALL_H, "barrierLarge");
+      const w = wall("z", z, seg[0], seg[1], wallH, "barrierLarge");
       props.push(...w.props);
       colliders.push(...w.colliders);
     }
@@ -251,18 +300,17 @@ export function footballMap(): MinigameMap {
     id: "football",
     props,
     colliders,
+    // index%2 -> team (0 Blue, 1 Red); Blue defends -z, Red defends +z.
     spawns: [
-      { x: 0, y: SPAWN_Y, z: -6 }, // owner 0 defends south goal
-      { x: 0, y: SPAWN_Y, z: 6 }, // owner 1 defends north goal
-      { x: -6, y: SPAWN_Y, z: 0 }, // owner 2 defends west goal
-      { x: 6, y: SPAWN_Y, z: 0 }, // owner 3 defends east goal
+      { x: -3, y: SPAWN_Y, z: -7 }, // 0 Blue
+      { x: -3, y: SPAWN_Y, z: 7 }, // 1 Red
+      { x: 3, y: SPAWN_Y, z: -7 }, // 2 Blue
+      { x: 3, y: SPAWN_Y, z: 7 }, // 3 Red
     ],
     killY: -8,
     goals: [
-      { owner: 0, team: 0, x: 0, y: 1.2, z: -HALF - 0.9, hx: GOAL_HALF, hy: 1.6, hz: 0.9 },
-      { owner: 1, team: 1, x: 0, y: 1.2, z: HALF + 0.9, hx: GOAL_HALF, hy: 1.6, hz: 0.9 },
-      { owner: 2, team: 2, x: -HALF - 0.9, y: 1.2, z: 0, hx: 0.9, hy: 1.6, hz: GOAL_HALF },
-      { owner: 3, team: 0, x: HALF + 0.9, y: 1.2, z: 0, hx: 0.9, hy: 1.6, hz: GOAL_HALF },
+      { owner: 0, team: 0, x: 0, y: 1.2, z: -halfZ - 0.9, hx: goalHalf, hy: 1.6, hz: 0.9 },
+      { owner: 1, team: 1, x: 0, y: 1.2, z: halfZ + 0.9, hx: goalHalf, hy: 1.6, hz: 0.9 },
     ],
   };
 }
@@ -315,8 +363,9 @@ export function shootingMap(): MinigameMap {
     props.push(...w.props);
     colliders.push(...w.colliders);
   }
-  // The dividing barrier between shooters (z < -1) and targets (z > 1).
-  const divider = wall("z", -1, -HALF_X, HALF_X, 1.1, "barrierLarge");
+  // The dividing barrier between shooters (z < -1) and targets (z > 1): a TALL
+  // collider so players cannot cross or jump it (the visible barrier stays low).
+  const divider = wall("z", -1, -HALF_X, HALF_X, 3.2, "barrierLarge");
   props.push(...divider.props);
   colliders.push(...divider.colliders);
   // Desert dressing.
@@ -339,7 +388,7 @@ export function shootingMap(): MinigameMap {
   };
 }
 
-// --- Climb ------------------------------------------------------------------
+// --- Climb (two routes) -----------------------------------------------------
 
 export interface ClimbStep {
   x: number;
@@ -349,107 +398,157 @@ export interface ClimbStep {
   d: number;
 }
 
-/**
- * A long, forgiving staircase rising to a flag: aligned on x=0 so moving forward
- * (and jumping) climbs it, with gentle 1.0-high steps and ~2.8 gaps. The wider
- * "landing" steps host rotating sweeper bars and spike-roller hazards. First to
- * the top scores most.
- */
-export const CLIMB_STEPS: ClimbStep[] = [
-  { x: 0, y: 0, z: -9, w: 8, d: 4 }, // 0 base
-  { x: 0, y: 1, z: -6.2, w: 6, d: 3 }, // 1
-  { x: 0, y: 2, z: -3.4, w: 7, d: 4 }, // 2 landing (sweeper)
-  { x: 0, y: 3, z: -0.6, w: 6, d: 3 }, // 3
-  { x: 0, y: 4, z: 2.2, w: 6, d: 3 }, // 4
-  { x: 0, y: 5, z: 5.0, w: 7, d: 4 }, // 5 landing (sweeper)
-  { x: 0, y: 6, z: 7.8, w: 6, d: 3 }, // 6
-  { x: 0, y: 7, z: 10.6, w: 6, d: 3 }, // 7
-  { x: 0, y: 8, z: 13.4, w: 7, d: 4 }, // 8 landing (sweeper + spikes)
-  { x: 0, y: 9, z: 16.2, w: 6, d: 3 }, // 9
-  { x: 0, y: 10, z: 19.0, w: 6, d: 3 }, // 10 (spikes)
-  { x: 0, y: 11, z: 21.8, w: 8, d: 5 }, // 11 summit (flag)
+/** Base + fork (both routes start here). */
+const CLIMB_BASE: ClimbStep = { x: 0, y: 0, z: -9, w: 10, d: 4 };
+const CLIMB_FORK: ClimbStep = { x: 0, y: 1, z: -5.5, w: 10, d: 3 };
+
+/** EASY route (left): long, wide, gentle steps, no hazards. */
+export const CLIMB_EASY: ClimbStep[] = [
+  { x: -4, y: 2.0, z: -2.0, w: 5, d: 3 },
+  { x: -5, y: 2.75, z: 0.2, w: 5, d: 3 },
+  { x: -5, y: 3.5, z: 2.4, w: 5, d: 3 },
+  { x: -5, y: 4.25, z: 4.6, w: 5, d: 3 },
+  { x: -5, y: 5.0, z: 6.8, w: 5, d: 3 },
+  { x: -4.5, y: 5.75, z: 9.0, w: 5, d: 3 },
+  { x: -4, y: 6.5, z: 11.2, w: 5, d: 3 },
+  { x: -3.5, y: 7.25, z: 13.4, w: 5, d: 3 },
+  { x: -3, y: 8.0, z: 15.0, w: 5, d: 3 },
 ];
 
-/** Indices of the wide landing steps that host rotating sweeper bars. */
-const CLIMB_LANDINGS = [
-  { i: 2, speed: 1.5, phase: 0, model: "swiperLong_teamRed" },
-  { i: 5, speed: -1.7, phase: 1.0, model: "swiperLong_teamBlue" },
-  { i: 8, speed: 1.6, phase: 2.0, model: "swiperLong_teamYellow" },
+/** HARD route (right): short, steep, narrow, with hazards. */
+export const CLIMB_HARD: ClimbStep[] = [
+  { x: 4, y: 2.4, z: -2.0, w: 3.6, d: 2.6 },
+  { x: 5, y: 3.8, z: 1.5, w: 3.4, d: 2.4 },
+  { x: 5, y: 5.2, z: 5.0, w: 3.4, d: 2.4 },
+  { x: 4.5, y: 6.6, z: 8.5, w: 3.4, d: 2.4 },
+  { x: 4, y: 8.0, z: 11.8, w: 3.6, d: 2.6 },
 ];
 
-/** Y a climber must reach (top of the summit step) to finish the round. */
-export const CLIMB_FINISH_Y = CLIMB_STEPS[CLIMB_STEPS.length - 1]!.y;
+/** Shared summit platform with the flag; both routes lead onto it. */
+const CLIMB_SUMMIT: ClimbStep = { x: 0, y: 8, z: 16, w: 14, d: 12 };
+
+/** Y a climber must reach (summit top) to finish the round. */
+export const CLIMB_FINISH_Y = CLIMB_SUMMIT.y;
+
+/** Bot routing: ordered waypoints (a platform sequence) for each route. */
+export const CLIMB_ROUTES: { easy: ClimbStep[]; hard: ClimbStep[] } = {
+  easy: [CLIMB_BASE, CLIMB_FORK, ...CLIMB_EASY, CLIMB_SUMMIT],
+  hard: [CLIMB_BASE, CLIMB_FORK, ...CLIMB_HARD, CLIMB_SUMMIT],
+};
+
+/** Every platform (for colliders + which-step-am-I-on checks). */
+export function climbPlatforms(): ClimbStep[] {
+  return [CLIMB_BASE, CLIMB_FORK, ...CLIMB_EASY, ...CLIMB_HARD, CLIMB_SUMMIT];
+}
+
+export function climbSummit(): ClimbStep {
+  return CLIMB_SUMMIT;
+}
+
+function tileStep(s: ClimbStep, model: string): MapProp[] {
+  const cols = Math.max(1, Math.round(s.w / 3.5));
+  const rows = Math.max(1, Math.round(s.d / 3.5));
+  const tw = s.w / cols;
+  const td = s.d / rows;
+  const out: MapProp[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      out.push({
+        model,
+        x: s.x - s.w / 2 + (c + 0.5) * tw,
+        y: s.y,
+        z: s.z - s.d / 2 + (r + 0.5) * td,
+        size: Math.max(tw, td),
+        anchor: "top",
+      });
+    }
+  }
+  return out;
+}
 
 export function climbMap(): MinigameMap {
   const props: MapProp[] = [];
   const colliders: MapCollider[] = [];
-  CLIMB_STEPS.forEach((s, i) => {
+
+  for (const s of climbPlatforms()) {
     colliders.push({ x: s.x, y: s.y - 0.5, z: s.z, hx: s.w / 2, hy: 0.5, hz: s.d / 2 });
-    const model = i === CLIMB_STEPS.length - 1 ? "tileLarge_forest" : "tileLarge_teamYellow";
-    const cols = Math.max(1, Math.round(s.w / 4));
-    const rows = Math.max(1, Math.round(s.d / 4));
-    const tw = s.w / cols;
-    const td = s.d / rows;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        props.push({
-          model,
-          x: s.x - s.w / 2 + (c + 0.5) * tw,
-          y: s.y,
-          z: s.z - s.d / 2 + (r + 0.5) * td,
-          size: Math.max(tw, td),
-          anchor: "top",
-        });
-      }
-    }
-  });
+  }
+  // Visual tiles: base/fork neutral, easy = forest (calm), hard = team-yellow, summit = forest.
+  props.push(...tileStep(CLIMB_BASE, "tileLarge_forest"));
+  props.push(...tileStep(CLIMB_FORK, "tileLarge_forest"));
+  for (const s of CLIMB_EASY) props.push(...tileStep(s, "tileLarge_teamBlue"));
+  for (const s of CLIMB_HARD) props.push(...tileStep(s, "tileLarge_teamYellow"));
+  props.push(...tileStep(CLIMB_SUMMIT, "tileLarge_forest"));
 
-  // Rotating sweeper bars on the landings (rendered + collided from roundClock).
-  const sweepers: MapSweeper[] = CLIMB_LANDINGS.map((l) => {
-    const s = CLIMB_STEPS[l.i]!;
-    return {
-      cx: s.x,
-      cz: s.z,
-      y: s.y + 1.1,
-      reach: s.w / 2 - 0.2,
-      thickness: 1.0,
-      speed: l.speed,
-      phase: l.phase,
-      model: l.model,
-    };
-  });
+  // Hard-route rotating sweepers.
+  const sweepers: MapSweeper[] = [
+    sweeperOn(CLIMB_HARD[1]!, 1.7, 0, "swiperLong_teamRed"),
+    sweeperOn(CLIMB_HARD[3]!, -1.8, 1.2, "swiperLong_teamBlue"),
+  ];
 
-  // Spike-roller proximity hazards on two of the wider steps.
+  // Hard-route spike roller.
   const hazards: MapHazard[] = [
-    { x: -1.8, y: CLIMB_STEPS[8]!.y, z: CLIMB_STEPS[8]!.z + 1.0, radius: 1.3, model: "spikeRoller" },
-    { x: 1.6, y: CLIMB_STEPS[10]!.y, z: CLIMB_STEPS[10]!.z, radius: 1.2, model: "spikeRoller" },
+    { x: CLIMB_HARD[2]!.x - 1.0, y: CLIMB_HARD[2]!.y, z: CLIMB_HARD[2]!.z, radius: 1.2, model: "spikeRoller" },
   ];
   for (const h of hazards) {
-    props.push({ model: h.model, x: h.x, y: h.y, z: h.z, size: 2.2, anchor: "top", yaw: h.yaw ?? 0 });
+    props.push({ model: h.model, x: h.x, y: h.y, z: h.z, size: 2.0, anchor: "top" });
   }
 
-  const top = CLIMB_STEPS[CLIMB_STEPS.length - 1]!;
-  props.push({ model: "flag_teamYellow", x: top.x, y: top.y, z: top.z + 1.6, size: 2.5 });
+  // Side barrels that launch balls across the hard route.
+  const launchers: MapLauncher[] = [
+    launcherAcross(CLIMB_HARD[0]!, 0),
+    launcherAcross(CLIMB_HARD[2]!, 1.5),
+  ];
+  for (const l of launchers) {
+    props.push({ model: l.model, x: l.x, y: l.y, z: l.z, size: 1.8, anchor: "bottom", yaw: Math.PI / 2 });
+  }
+
+  // Flag on the summit + signposts at the fork (easy left, hard right) + decor.
+  props.push({ model: "flag_teamYellow", x: CLIMB_SUMMIT.x, y: CLIMB_SUMMIT.y, z: CLIMB_SUMMIT.z, size: 2.6 });
   props.push(
-    { model: "tree_forest", x: -5, y: 0, z: -9, size: 3.5 },
-    { model: "tree_forest", x: 5, y: 0, z: -9, size: 3 },
-    { model: "rocksB_forest", x: -4, y: 0, z: -6, size: 2 },
+    { model: "flag_teamBlue", x: -3, y: CLIMB_FORK.y, z: CLIMB_FORK.z + 1, size: 1.6 },
+    { model: "flag_teamYellow", x: 3, y: CLIMB_FORK.y, z: CLIMB_FORK.z + 1, size: 1.6 },
+    { model: "tree_forest", x: -7, y: 0, z: -9, size: 3.5 },
+    { model: "tree_forest", x: 7, y: 0, z: -9, size: 3 },
+    { model: "rocksB_forest", x: -5, y: 0, z: -6, size: 2 },
   );
 
-  const base = CLIMB_STEPS[0]!;
   return {
     id: "climb",
     props,
     colliders,
     sweepers,
     hazards,
+    launchers,
     spawns: [
-      { x: base.x - 2, y: base.y + SPAWN_Y, z: base.z },
-      { x: base.x + 2, y: base.y + SPAWN_Y, z: base.z },
-      { x: base.x - 1, y: base.y + SPAWN_Y, z: base.z - 1.5 },
-      { x: base.x + 1, y: base.y + SPAWN_Y, z: base.z - 1.5 },
+      { x: CLIMB_BASE.x - 2.5, y: CLIMB_BASE.y + SPAWN_Y, z: CLIMB_BASE.z },
+      { x: CLIMB_BASE.x + 2.5, y: CLIMB_BASE.y + SPAWN_Y, z: CLIMB_BASE.z },
+      { x: CLIMB_BASE.x - 1, y: CLIMB_BASE.y + SPAWN_Y, z: CLIMB_BASE.z - 1 },
+      { x: CLIMB_BASE.x + 1, y: CLIMB_BASE.y + SPAWN_Y, z: CLIMB_BASE.z - 1 },
     ],
     killY: -6,
+  };
+}
+
+function sweeperOn(s: ClimbStep, speed: number, phase: number, model: string): MapSweeper {
+  return { cx: s.x, cz: s.z, y: s.y + 1.1, reach: s.w / 2 + 0.4, thickness: 1.0, speed, phase, model };
+}
+
+/** A barrel on the +x side firing a ball toward -x across the hard step. */
+function launcherAcross(s: ClimbStep, phase: number): MapLauncher {
+  return {
+    x: 8.5,
+    y: s.y,
+    z: s.z,
+    dx: -1,
+    dz: 0,
+    speed: 6,
+    range: 9,
+    interval: 3,
+    phase,
+    ballR: 0.5,
+    model: "powerupBlock_teamRed",
+    ballModel: "ball_teamYellow",
   };
 }
 
@@ -538,6 +637,10 @@ export function allMapProps(): string[] {
     for (const p of m.props) set.add(p.model);
     for (const s of m.sweepers ?? []) set.add(s.model);
     for (const h of m.hazards ?? []) set.add(h.model);
+    for (const l of m.launchers ?? []) {
+      set.add(l.model);
+      set.add(l.ballModel);
+    }
   }
   // Crumble floor tiles (built client-side, not in any map's props).
   for (const m of CRUMBLE.models) set.add(m);

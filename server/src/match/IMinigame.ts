@@ -1,6 +1,23 @@
+import type { InputIntent } from "@party-royale/shared";
 import type { PhysicsWorld } from "../physics/PhysicsWorld";
 import type { PlayerSim } from "../physics/PlayerSim";
 import type { EntityState, MatchState } from "../rooms/schema";
+
+/**
+ * A bot's high-level intent for a tick: where to go, whether to press the action
+ * button, and an optional forced jump (e.g. to clear a known gap or dodge a
+ * hazard). `BotController` turns this into smart movement (steering, edge/gap
+ * jumping, skill noise).
+ */
+export interface BotPlan {
+  tx: number;
+  tz: number;
+  action?: boolean;
+  /** Force a jump this tick (overrides the controller's own jump heuristic). */
+  jump?: boolean;
+  /** Hold position (do not advance) — used to wait out a hazard. */
+  hold?: boolean;
+}
 
 /**
  * Everything a minigame needs from the room to run a round. The room owns the
@@ -20,8 +37,6 @@ export interface MinigameContext {
   /** Set a player's current-round score outright. */
   setScore(id: string, score: number): void;
   getScore(id: string): number;
-  /** Suggested goal point a bot heads toward this round. */
-  botTarget(id: string): { x: number; z: number };
   /** Consume the action-button edge (kick / shoot) for a player, if any. */
   consumeAction(id: string): boolean;
   /** A player's facing direction on the ground plane (unit vector). */
@@ -30,6 +45,10 @@ export interface MinigameContext {
   addEntity(kind: string, variant?: number): EntityState;
   /** Toggle the solid lobby platform collider (minigames build their own floor). */
   setPlatformEnabled(enabled: boolean): void;
+  /** Show a transient banner (e.g. a goal announcement) for a couple seconds. */
+  setBanner(text: string): void;
+  /** Index of this bot among the bots (stable per round), for route/role splits. */
+  botIndex(id: string): number;
 }
 
 /**
@@ -46,8 +65,12 @@ export interface IMinigame {
   update(ctx: MinigameContext, dt: number): void;
   isComplete(ctx: MinigameContext): boolean;
   teardown(ctx: MinigameContext): void;
-  /** Optional per-bot goal point for this round; defaults to arena center. */
-  botTarget?(id: string, ctx: MinigameContext): { x: number; z: number };
-  /** Whether a bot should press the action button this tick (kick / shoot). */
-  botAction?(id: string, ctx: MinigameContext): boolean;
+  /**
+   * Smart per-bot plan for this round (target point + action/jump). The room
+   * feeds it through `BotController` for steering. Falls back to the arena center
+   * when omitted.
+   */
+  botPlan?(id: string, ctx: MinigameContext, dt: number): BotPlan;
 }
+
+export type { InputIntent };

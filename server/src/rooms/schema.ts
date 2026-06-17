@@ -23,6 +23,8 @@ export class PlayerState extends Schema {
   points = 0;
   /** Raw score in the current minigame (goals / hits / gems / climb rank). */
   roundScore = 0;
+  /** Team for team rounds (0/1), or -1 when not a team round. */
+  team = -1;
 }
 
 defineTypes(PlayerState, {
@@ -40,6 +42,7 @@ defineTypes(PlayerState, {
   placement: "number",
   points: "number",
   roundScore: "number",
+  team: "number",
 });
 
 /**
@@ -90,6 +93,8 @@ export class MatchState extends Schema {
   entities = new ArraySchema<EntityState>();
   /** Crumbling-floor tile liveness (true = present). Empty outside that round. */
   tiles = new ArraySchema<boolean>();
+  /** Transient banner text (e.g. "GOAL! Blue 2 - 1 Red"); "" when hidden. */
+  banner = "";
   winnerId = "";
   winnerName = "";
 }
@@ -105,6 +110,7 @@ defineTypes(MatchState, {
   roundClock: "number",
   entities: [EntityState],
   tiles: ["boolean"],
+  banner: "string",
   winnerId: "string",
   winnerName: "string",
 });

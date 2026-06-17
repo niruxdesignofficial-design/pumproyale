@@ -40,10 +40,12 @@ pnpm install
 # 2. Create the dev database (SQLite)
 pnpm --filter @party-royale/server db:push
 
-# 3. Drop the KayKit packs into assets-source/ (CC0; not committed) and prepare:
+# 3. Drop the CC0 packs into assets-source/ (not committed) and prepare:
 #      - KayKit Adventurers          (required: playable characters + animations)
 #      - KayKit Mini-Game Variety    (required: all map props, balls, goals,
 #                                      targets, tiles, gems, barriers, decor)
+#      - Kenney "IU Y AUDIO" packs   (optional: UI fonts, medals, icons, SFX) in
+#                                      assets-source/IU Y AUDIO or ../assets game/
 #    Layout does not matter; the pipeline scans recursively.
 pnpm assets:prepare
 
@@ -63,25 +65,28 @@ If you skip step 3, the client still runs but shows placeholder characters.
 
 ## How to play
 
-From the **main menu**, hit Play, pick one of the 5 **Adventurers** on the
-character-select screen, then Find match. A match fills to 4 (bots take empty
-slots after a short timer), counts down, then everyone plays all four minigames
-in order. Each round awards placement points (10 / 6 / 3 / 1 by round score);
-the highest total across all rounds wins. **There is no elimination** — every
-player plays to the end:
+From the **main menu**, type a **name** (required), pick one of the 5
+**Adventurers**, then Find match. In the **lobby** (with a minimap preview of the
+courses) a match fills to 4 — bots take empty slots and play competitively — then
+counts down and everyone plays all four minigames in order. Each round awards
+placement points (10 / 6 / 3 / 1 by round score, ties split evenly, and scoring
+nothing earns nothing); the highest total wins. **No elimination** — everyone
+plays to the end. Order:
 
-- **Soccer Scramble** - push or kick (action button) the ball into either goal;
-  each goal scores for whoever last touched it. Most goals wins the round.
-- **Target Range** - face a target and shoot (action button, forgiving aim cone);
-  each hit scores and the target pops up elsewhere. Most hits wins.
-- **Tower Climb** - jump up the stepped platforms to the flag at the summit;
-  first to the top wins, others ranked by how high they got.
-- **Gem Rush** - run over the gems scattered across the arena; each one scores
-  and a new gem appears. Most gems wins.
+- **Soccer Scramble** (2v2, 35s) - two teams of two; the ball in a team's net
+  scores for the OTHER team (own goals included). Push it or kick it (action
+  button); a tall invisible wall keeps it in. Teammates share the team score.
+- **Gem Rush** (crumbling floor) - grab gems that appear on live tiles; the floor
+  drops where you step. Fall through and you watch from the ledge. Most gems wins.
+- **Tower Climb** (40s) - two routes to the flag: a long easy one or a short hard
+  one with spinning bars, a spike roller, and side barrels that launch balls. Only
+  players who touch the flag score, ranked by finish order.
+- **Target Range** - sealed behind a barrier, shoot the targets (which face you)
+  on the far side. Each hit scores and the target pops up elsewhere.
 
-Maps and props are built entirely from the **KayKit Mini-Game Variety Pack**
-(tiles, goals, targets, gems, barriers, decor); the players are the animated
-KayKit Adventurers.
+Maps and props are built entirely from the **KayKit Mini-Game Variety Pack**;
+players are the animated KayKit Adventurers; the UI, fonts, and SFX are from
+**Kenney** (CC0).
 
 | Input            | Action                        |
 | ---------------- | ----------------------------- |

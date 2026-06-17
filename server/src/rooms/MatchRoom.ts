@@ -48,8 +48,10 @@ export class MatchRoom extends Room<MatchState> {
   private readonly inputRate = new Map<string, { windowStart: number; count: number }>();
   private readonly actionEdge = new Map<string, boolean>();
   private readonly lastAction = new Map<string, boolean>();
+  private readonly botOrder = new Map<string, number>();
   private ctx!: MinigameContext;
   private platformCollider: RAPIER.Collider | null = null;
+  private bannerTimer = 0;
 
   private spawnCounter = 0;
   private botCounter = 0;
@@ -85,7 +87,6 @@ export class MatchRoom extends Room<MatchState> {
         if (p) p.roundScore = score;
       },
       getScore: (id) => this.state.players.get(id)?.roundScore ?? 0,
-      botTarget: (id) => this.minigame?.botTarget?.(id, this.ctx) ?? { x: 0, z: 0 },
       consumeAction: (id) => {
         const v = this.actionEdge.get(id) ?? false;
         if (v) this.actionEdge.set(id, false);
@@ -103,6 +104,11 @@ export class MatchRoom extends Room<MatchState> {
         return e;
       },
       setPlatformEnabled: (enabled) => this.setPlatformEnabled(enabled),
+      setBanner: (text) => {
+        this.state.banner = text;
+        this.bannerTimer = 2.6;
+      },
+      botIndex: (id) => this.botOrder.get(id) ?? 0,
     };
 
     this.onMessage(INPUT_MESSAGE, (client, message: InputIntent) => {
@@ -179,9 +185,21 @@ export class MatchRoom extends Room<MatchState> {
       this.state.phase === "countdown" ||
       this.state.phase === "intro";
 
+    const playing = this.state.phase === "playing";
     for (const [id, sim] of this.sims) {
       const ai = this.bots.get(id);
-      if (ai) sim.setInput(ai.think(sim, this.ctx.botTarget(id), dt, this.botSeq++));
+      if (ai) {
+        const plan =
+          playing && this.minigame?.botPlan
+            ? this.minigame.botPlan(id, this.ctx, dt)
+            : { tx: 0, tz: 0 };
+        const intent = ai.think(sim, plan, this.physics, dt, this.botSeq++);
+        sim.setInput(intent);
+        // Bots get the same action-edge treatment as human input.
+        const prev = this.lastAction.get(id) ?? false;
+        if (intent.action && !prev) this.actionEdge.set(id, true);
+        this.lastAction.set(id, intent.action);
+      }
       sim.preStep(dt);
     }
 
@@ -238,10 +256,9 @@ export class MatchRoom extends Room<MatchState> {
     this.roundElapsed += dt;
     this.matchClock += dt;
     this.state.roundClock = this.roundElapsed;
-
-    // Let bots press the action button (kick / shoot) before the minigame reads it.
-    for (const id of this.bots.keys()) {
-      if (this.minigame.botAction?.(id, this.ctx)) this.actionEdge.set(id, true);
+    if (this.bannerTimer > 0) {
+      this.bannerTimer -= dt;
+      if (this.bannerTimer <= 0) this.state.banner = "";
     }
 
     this.minigame.update(this.ctx, dt);
@@ -283,8 +300,13 @@ export class MatchRoom extends Room<MatchState> {
     this.roundElapsed = 0;
     this.state.roundClock = 0;
     this.state.round = this.roundIndex + 1;
-    // Fresh round: everyone starts at zero score, and bot action timers reset.
-    this.state.players.forEach((p) => (p.roundScore = 0));
+    // Fresh round: everyone starts at zero score / no team, banner cleared.
+    this.state.players.forEach((p) => {
+      p.roundScore = 0;
+      p.team = -1;
+    });
+    this.state.banner = "";
+    this.bannerTimer = 0;
     this.actionEdge.clear();
     this.lastAction.clear();
     this.minigame.setup(this.ctx);
@@ -298,16 +320,38 @@ export class MatchRoom extends Room<MatchState> {
     this.startRound();
   }
 
-  /** Turn this round's scores into placement points (10/6/3/1). */
+  /**
+   * Turn this round's scores into placement points. Players who scored nothing
+   * (roundScore <= 0) get 0; the rest are ranked by score, and tied scores split
+   * the averaged points for the ranks they span (so teammates with an equal team
+   * score get equal points, and climb non-finishers get nothing).
+   */
   private awardPoints(): void {
-    const ranked = [...this.sims.keys()].sort(
-      (a, b) =>
-        (this.state.players.get(b)?.roundScore ?? 0) - (this.state.players.get(a)?.roundScore ?? 0),
-    );
-    ranked.forEach((id, rank) => {
-      const p = this.state.players.get(id);
-      if (p) p.points += PLACE_POINTS[Math.min(rank, PLACE_POINTS.length - 1)] ?? 0;
-    });
+    const positives = [...this.sims.keys()]
+      .filter((id) => (this.state.players.get(id)?.roundScore ?? 0) > 0)
+      .sort(
+        (a, b) =>
+          (this.state.players.get(b)?.roundScore ?? 0) -
+          (this.state.players.get(a)?.roundScore ?? 0),
+      );
+    const ptsAt = (rank: number): number => PLACE_POINTS[Math.min(rank, PLACE_POINTS.length - 1)] ?? 0;
+    let i = 0;
+    while (i < positives.length) {
+      const score = this.state.players.get(positives[i]!)?.roundScore ?? 0;
+      let j = i;
+      while (j < positives.length && (this.state.players.get(positives[j]!)?.roundScore ?? 0) === score) {
+        j++;
+      }
+      // Ranks [i, j) tie: each gets the average of their placement points.
+      let sum = 0;
+      for (let r = i; r < j; r++) sum += ptsAt(r);
+      const avg = Math.round(sum / (j - i));
+      for (let r = i; r < j; r++) {
+        const p = this.state.players.get(positives[r]!);
+        if (p) p.points += avg;
+      }
+      i = j;
+    }
   }
 
   private endMatch(): void {
@@ -360,6 +404,7 @@ export class MatchRoom extends Room<MatchState> {
     const spawn = spawnPoint(this.spawnCounter++, MAX_PLAYERS);
     this.sims.set(id, new PlayerSim(this.physics, spawn));
     this.bots.set(id, new BotController());
+    this.botOrder.set(id, this.botOrder.size);
 
     const player = new PlayerState();
     player.name = `Bot-${this.botCounter}`;
@@ -380,6 +425,7 @@ export class MatchRoom extends Room<MatchState> {
     this.sims.get(id)?.destroy();
     this.sims.delete(id);
     this.bots.delete(id);
+    this.botOrder.delete(id);
     this.inputRate.delete(id);
     this.actionEdge.delete(id);
     this.lastAction.delete(id);

@@ -204,6 +204,17 @@ export class PlayerSim {
     return this.body.translation();
   }
 
+  /** True when standing on ground (read by bot AI for jump decisions). */
+  get isGrounded(): boolean {
+    return this.grounded;
+  }
+
+  /** Horizontal speed, for bot stuck-detection. */
+  get planarSpeed(): number {
+    const v = this.body.linvel();
+    return Math.hypot(v.x, v.z);
+  }
+
   animState(): AnimationState {
     if (this.diving) return "dive";
     if (this.shootTimer > 0) return "shoot";

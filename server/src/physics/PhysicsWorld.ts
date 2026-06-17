@@ -28,6 +28,13 @@ export class PhysicsWorld {
     return this.world.castRay(ray, maxToi, true, undefined, undefined, exclude) !== null;
   }
 
+  /** Distance to solid ground straight below (x,y,z), or null within maxToi. */
+  groundBelow(x: number, y: number, z: number, maxToi: number): number | null {
+    const ray = new RAPIER.Ray({ x, y, z }, { x: 0, y: -1, z: 0 });
+    const hit = this.world.castRay(ray, maxToi, true);
+    return hit ? hit.timeOfImpact : null;
+  }
+
   dispose(): void {
     this.world.free();
   }

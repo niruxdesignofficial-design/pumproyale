@@ -7,7 +7,7 @@ import {
   gemsMap,
   type MinigameMap,
 } from "@party-royale/shared";
-import type { IMinigame, MinigameContext } from "../IMinigame";
+import type { BotPlan, IMinigame, MinigameContext } from "../IMinigame";
 import type { EntityState } from "../../rooms/schema";
 import { buildMapColliders, removeColliders } from "../mapColliders";
 
@@ -195,11 +195,14 @@ export class GemsMinigame implements IMinigame {
     ctx.setPlatformEnabled(true);
   }
 
-  /** Bots chase the nearest live gem. */
-  botTarget(id: string, ctx: MinigameContext): { x: number; z: number } {
+  /**
+   * Bots chase the nearest live gem (the controller's edge-avoidance keeps them
+   * from walking into the holes left by dropped tiles). Out bots hold still.
+   */
+  botPlan(id: string, ctx: MinigameContext): BotPlan {
     const sim = ctx.sims.get(id);
-    if (!sim || this.out.has(id)) return { x: 0, z: 0 };
-    let best = { x: 0, z: 0 };
+    if (!sim || this.out.has(id)) return { tx: sim?.position.x ?? 0, tz: sim?.position.z ?? 0, hold: true };
+    let best = { x: sim.position.x, z: sim.position.z };
     let bestDist = Infinity;
     for (const gem of this.gems) {
       if (!gem.entity.active) continue;
@@ -209,6 +212,6 @@ export class GemsMinigame implements IMinigame {
         best = { x: gem.entity.x, z: gem.entity.z };
       }
     }
-    return best;
+    return { tx: best.x, tz: best.z };
   }
 }

@@ -26,6 +26,7 @@ export class Avatar {
   private readonly targetPos = new THREE.Vector3();
   private targetYaw = 0;
   private hasTarget = false;
+  private ringMat: THREE.MeshBasicMaterial | null = null;
   private readonly disposables: { dispose(): void }[] = [];
 
   constructor(characterId: string, ringColor: number) {
@@ -98,6 +99,11 @@ export class Avatar {
     this.object3d.visible = !eliminated;
   }
 
+  /** Recolor the ground ring (used to show team color during team rounds). */
+  setRingColor(color: number): void {
+    this.ringMat?.color.set(color);
+  }
+
   dispose(): void {
     this.mixer?.stopAllAction();
     for (const d of this.disposables) d.dispose();
@@ -126,6 +132,7 @@ export class Avatar {
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.03;
     this.object3d.add(ring);
+    this.ringMat = mat;
     this.disposables.push(geo, mat);
   }
 

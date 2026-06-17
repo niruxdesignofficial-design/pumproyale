@@ -2,12 +2,14 @@ import * as THREE from "three";
 import {
   CRUMBLE,
   GEMS,
+  type MapLauncher,
   type MapSweeper,
   crumbleTiles,
   footballMap,
   shootingMap,
   climbMap,
   gemsMap,
+  launcherBall,
   sweeperAngle,
 } from "@party-royale/shared";
 import { buildMapView } from "./MapBuilder";
@@ -38,6 +40,7 @@ export class MinigameViews {
   private entityMeshes: (THREE.Object3D | null)[] = [];
   private entityKeys: string[] = [];
   private swipers: { mesh: THREE.Object3D; def: MapSweeper }[] = [];
+  private launchers: { mesh: THREE.Object3D; def: MapLauncher }[] = [];
   private tileMeshes: (THREE.Object3D | null)[] = [];
   private falling: boolean[] = [];
 
@@ -60,6 +63,7 @@ export class MinigameViews {
     this.entityMeshes = [];
     this.entityKeys = [];
     this.swipers = [];
+    this.launchers = [];
     this.tileMeshes = [];
     this.falling = [];
 
@@ -86,6 +90,13 @@ export class MinigameViews {
         this.container.add(mesh);
         this.swipers.push({ mesh, def: s });
       }
+      for (const l of map.launchers ?? []) {
+        const mesh = makeProp(l.ballModel, l.ballR * 2, "center");
+        if (!mesh) continue;
+        mesh.visible = false;
+        this.container.add(mesh);
+        this.launchers.push({ mesh, def: l });
+      }
     }
     if (next === "gems") this.buildCrumble();
 
@@ -102,6 +113,18 @@ export class MinigameViews {
 
     // Rotating sweeper bars track the synced round clock.
     for (const sw of this.swipers) sw.mesh.rotation.y = -sweeperAngle(sw.def, roundClock);
+
+    // Launched balls roll across the path (deterministic from the round clock).
+    for (const lc of this.launchers) {
+      const ball = launcherBall(lc.def, roundClock);
+      if (ball) {
+        lc.mesh.visible = true;
+        lc.mesh.position.set(ball.x, ball.y + lc.def.ballR, ball.z);
+        lc.mesh.rotation.x += dt * 6;
+      } else {
+        lc.mesh.visible = false;
+      }
+    }
 
     // Crumbling floor: tiles that flipped to dead fall away (telegraphed).
     if (this.active === "gems" && tiles) {
@@ -140,6 +163,7 @@ export class MinigameViews {
       mesh.position.set(e.x, e.kind === "target" ? 0 : e.y, e.z);
       if (e.kind === "gem") mesh.rotation.y += dt * 1.8;
       else if (e.kind === "ball") mesh.rotation.y += dt * 1.2;
+      else if (e.kind === "target") mesh.rotation.y = e.yaw;
     }
   }
 
@@ -162,7 +186,18 @@ export class MinigameViews {
 
 function buildEntity(e: NetEntity): THREE.Object3D | null {
   if (e.kind === "ball") return makeProp("ball_teamRed", 1.1, "center");
-  if (e.kind === "target") return makeProp("targetStand", 2.2, "bottom");
+  if (e.kind === "target") {
+    // A stand plus a bullseye that faces the players (rotated by the entity yaw).
+    const g = new THREE.Group();
+    const stand = makeProp("targetStand", 1.7, "bottom");
+    if (stand) g.add(stand);
+    const bull = makeProp("target", 1.5, "center");
+    if (bull) {
+      bull.position.y = 1.3;
+      g.add(bull);
+    }
+    return g;
+  }
   if (e.kind === "gem") {
     const model = GEMS.variants[e.variant % GEMS.variants.length]!;
     return makeProp(model, 1.0, "center");
