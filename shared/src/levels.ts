@@ -299,13 +299,6 @@ export function footballMap(): MinigameMap {
     { model: "flag_teamYellow", x: halfX - 0.6, y: 0, z: halfZ - 0.6, size: 1.4 },
   );
 
-  // Two midfield ramps the ball and players ride over (a bit of chaos/variety).
-  for (const sx of [-4.5, 4.5]) {
-    const pitch = 0.26;
-    colliders.push({ x: sx, y: 0.45, z: 0, hx: 2.2, hy: 0.25, hz: 2.8, pitch });
-    props.push({ model: "tileSlopeLowMedium_teamYellow", x: sx, y: 0, z: 0, size: 4, pitch });
-  }
-
   // Tall invisible side walls (full length).
   for (const x of [-halfX - 0.4, halfX + 0.4]) {
     const w = wall("x", x, -halfZ, halfZ, wallH, "barrierLarge");
@@ -438,17 +431,17 @@ const CLIMB_FORK: ClimbStep = { x: 0, y: 1, z: -5.5, w: 10, d: 3 };
  */
 function buildEasyRoute(): ClimbStep[] {
   const out: ClimbStep[] = [];
-  const n = 32;
+  const n = 22; // fewer, more separated platforms = real jumps (miss = fall to the void)
   for (let i = 1; i <= n; i++) {
     const t = i / n;
     const y = 1.6 + t * 6.2; // gentle rise to ~7.8
-    const z = -3 + (i - 1) * 0.62; // advance toward the summit (ends ~z16)
-    // Wide weave pushed to the -x side at the bottom, funnelling back toward the
-    // summit (x~0) at the top so the final hop onto the win platform is reachable.
-    const center = -5.5 * (1 - t);
-    const amp = 5.2 * (1 - t * 0.7);
-    const x = center + Math.sin(i * 0.72) * amp;
-    out.push({ x, y, z, w: 2.7, d: 2.5 });
+    const z = -3 + (i - 1) * 0.95; // bigger spacing toward the summit (ends ~z17)
+    // Pushed far to the -x side (well separated from the yellow route at +x),
+    // funnelling back to the summit (x~0) only at the very top.
+    const center = -8 * (1 - t);
+    const amp = 4.5 * (1 - t * 0.6);
+    const x = center + Math.sin(i * 0.85) * amp;
+    out.push({ x, y, z, w: 2.6, d: 2.4 });
   }
   return out;
 }

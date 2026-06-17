@@ -110,8 +110,6 @@ export class Game {
     pmrem.dispose();
     this.minigameViews = new MinigameViews(built.scene, built.platform, built.grid);
     this.cameraRig = new CameraRig(canvas, this.aspect());
-    // Let the camera avoid clipping through the active map's props (trees, walls).
-    this.cameraRig.setOccluder(this.minigameViews.container);
     this.renderer.setSize(this.width(), this.height());
     this.loop = new GameLoop(this.onFrame);
     window.addEventListener("resize", this.onResize);
@@ -285,9 +283,8 @@ export class Game {
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
     if (local) {
-      // Auto-orient the camera behind the player's facing.
-      this.cameraRig.setYaw(local.object3d.rotation.y);
       this.cameraRig.follow(local.position);
+      this.cameraRig.update();
     } else {
       this.cameraRig.spectate(CENTER);
     }
