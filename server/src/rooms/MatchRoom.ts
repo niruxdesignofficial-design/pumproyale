@@ -23,6 +23,8 @@ const FILL_WAIT = 8;
 const COUNTDOWN = 4;
 const END_SCREEN = 12;
 const MIN_HUMANS = 1;
+/** Generous cap above the ~30 Hz client send rate; excess input is dropped. */
+const MAX_INPUTS_PER_SECOND = 90;
 
 type Phase = "waiting" | "countdown" | "playing" | "ended";
 
@@ -40,6 +42,7 @@ export class MatchRoom extends Room<MatchState> {
   private physics!: PhysicsWorld;
   private readonly sims = new Map<string, PlayerSim>();
   private readonly bots = new Map<string, BotController>();
+  private readonly inputRate = new Map<string, { windowStart: number; count: number }>();
   private ctx!: MinigameContext;
   private platformCollider: RAPIER.Collider | null = null;
   private survivorsTarget = 1;
@@ -75,6 +78,7 @@ export class MatchRoom extends Room<MatchState> {
 
     this.onMessage(INPUT_MESSAGE, (client, message: InputIntent) => {
       if (this.state.phase === "ended") return;
+      if (!this.allowInput(client.sessionId)) return; // rate limit / anti-flood
       this.sims.get(client.sessionId)?.setInput(sanitizeInput(message));
     });
 
@@ -309,6 +313,23 @@ export class MatchRoom extends Room<MatchState> {
     this.sims.get(id)?.destroy();
     this.sims.delete(id);
     this.bots.delete(id);
+    this.inputRate.delete(id);
+  }
+
+  /**
+   * Per-client input rate limit. Clients sample at ~30 Hz; anything well above
+   * that is dropped to blunt flooding. Sanitization plus this cap means a client
+   * cannot move the simulation in ways the server does not allow.
+   */
+  private allowInput(sessionId: string): boolean {
+    const now = Date.now();
+    const entry = this.inputRate.get(sessionId);
+    if (!entry || now - entry.windowStart >= 1000) {
+      this.inputRate.set(sessionId, { windowStart: now, count: 1 });
+      return true;
+    }
+    entry.count += 1;
+    return entry.count <= MAX_INPUTS_PER_SECOND;
   }
 
   /** Add or remove the solid base platform collider (Hex Fall removes it). */

@@ -10,9 +10,14 @@ export function Hud({ state }: { state: GameState }) {
   if (state.status === "error") {
     return (
       <Overlay>
-        <div className="hud-error-title">Connection lost</div>
+        <div className="hud-error-title">
+          {state.winnerName ? "Match over" : "Connection lost"}
+        </div>
         <span>{state.error || "Could not reach the game server."}</span>
-        <span className="hud-dim">Start the server with `pnpm dev` and reload.</span>
+        <button className="hud-button" onClick={() => window.location.reload()}>
+          Play again
+        </button>
+        <span className="hud-dim">Make sure the server is running (`pnpm dev`).</span>
       </Overlay>
     );
   }

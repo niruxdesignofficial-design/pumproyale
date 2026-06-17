@@ -341,6 +341,19 @@ body,
   color: #ff8a8a;
 }
 
+.hud-button {
+  pointer-events: auto;
+  background: var(--accent);
+  color: #08111f;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
 .hud-dim {
   font-size: 12px;
   color: var(--muted);

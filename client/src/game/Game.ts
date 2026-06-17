@@ -5,6 +5,7 @@ import { Renderer } from "../core/Renderer";
 import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
+import { sound } from "../core/Sound";
 import { NetClient, defaultServerUrl } from "../net/NetClient";
 import { getAuthWallet } from "../solana/auth";
 import { createScene } from "./Scene";
@@ -104,6 +105,8 @@ export class Game {
     this.wireRoom(room);
 
     this.input.attach();
+    // Enable audio on the first user gesture (browsers block it before that).
+    window.addEventListener("keydown", this.enableSound, { once: true });
     gameStore.set({ status: "connected", usingFallback: this.gltf === null });
     this.loop.start();
   }
@@ -113,6 +116,7 @@ export class Game {
     this.loop.stop();
     window.removeEventListener("resize", this.onResize);
     this.input.detach();
+    window.removeEventListener("keydown", this.enableSound);
     void this.net.dispose();
     for (const avatar of this.avatars.values()) avatar.dispose();
     this.avatars.clear();
@@ -166,9 +170,11 @@ export class Game {
     s.listen?.("alive", (v: number) => gameStore.set({ alivePlayers: v }));
     s.listen?.("zoneRadius", (v: number) => (this.zoneRadius = v));
     s.listen?.("winnerName", (v: string) => gameStore.set({ winnerName: v }));
-    s.listen?.("winnerId", (v: string) =>
-      gameStore.set({ isLocalWinner: v.length > 0 && v === this.localId }),
-    );
+    s.listen?.("winnerId", (v: string) => {
+      const isLocal = v.length > 0 && v === this.localId;
+      gameStore.set({ isLocalWinner: isLocal });
+      if (v.length > 0) sound.play(isLocal ? "win" : "lose");
+    });
 
     room.onLeave(() => {
       if (!this.disposed) gameStore.set({ status: "error", error: "Disconnected from server." });
@@ -219,6 +225,8 @@ export class Game {
       seq: this.seq++,
     };
   }
+
+  private readonly enableSound = (): void => sound.enable();
 
   private readonly onResize = (): void => {
     this.renderer.setSize(this.width(), this.height());

@@ -13,6 +13,15 @@ export interface Participant {
   placement: number;
 }
 
+/** Points awarded for a finish: winners get a flat bonus, others scale by placement. */
+export function computePoints(
+  placement: number,
+  isWinner: boolean,
+  maxPlayers: number = MAX_PLAYERS,
+): number {
+  return isWinner ? WIN_POINTS : Math.max(0, (maxPlayers - placement) * PLACE_POINTS);
+}
+
 /**
  * Atomically record a finished match: update each wallet-holding participant's
  * leaderboard row, and create an idempotent (one-per-match) reward for the
@@ -27,9 +36,7 @@ export async function recordMatchResult(
 ): Promise<void> {
   for (const p of participants) {
     const isWinner = p.wallet === winnerWallet;
-    const pointsGain = isWinner
-      ? WIN_POINTS
-      : Math.max(0, (MAX_PLAYERS - p.placement) * PLACE_POINTS);
+    const pointsGain = computePoints(p.placement, isWinner);
 
     await prisma.player.upsert({
       where: { wallet: p.wallet },
