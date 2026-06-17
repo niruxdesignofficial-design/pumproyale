@@ -462,6 +462,38 @@ body,
   pointer-events: none;
 }
 
+.hud-intro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+.hud-intro-round {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hud-intro-name {
+  font-size: 56px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.hud-intro-go {
+  margin-top: 6px;
+  font-size: 16px;
+  color: var(--accent);
+}
+
 .hud-win-title {
   font-size: 40px;
   font-weight: 800;

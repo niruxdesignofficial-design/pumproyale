@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { getCharacterGltf, getClips, preloadCharacters } from "../game/characterModel";
 
@@ -22,8 +23,11 @@ export function CharacterPreview({ characterId }: { characterId: string }) {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const scene = new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 1.3));
-    const key = new THREE.DirectionalLight(0xfff2e0, 1.8);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xb9d0c0, 0.7));
+    const key = new THREE.DirectionalLight(0xfff4e6, 1.2);
     key.position.set(2, 4, 3);
     scene.add(key);
 

@@ -6,29 +6,38 @@ import { buildMapColliders, removeColliders } from "../mapColliders";
 const SPRING_COOLDOWN = 0.6;
 const SWEEP_KNOCK = 8;
 const BOT_LANE = 3.6;
+/** Once the first player finishes, everyone gets this long to also finish. */
+const QUALIFY_WINDOW = 14;
 
 /**
- * Obstacle race: cross the lane to the finish while rotating beams sweep you off
- * and springs bounce you along. Falling off respawns you at your last checkpoint
- * (time loss, not elimination). The first `survivorsTarget` to finish advance;
- * the rest are eliminated once enough finish or the timer runs out.
+ * Obstacle race: cross the lane to the finish while rotating beams sweep you and
+ * springs bounce you along. Falling off respawns you at your last checkpoint
+ * (time loss, not elimination). When the first player finishes, a qualify window
+ * opens so others have a fair chance; the round then resolves and the slowest
+ * (by finish order, then by distance) are eliminated down to the survivor target.
  */
 export class BeamRunMinigame implements IMinigame {
   readonly id = "beamrun";
   readonly name = "Beam Run";
   readonly type: MinigameType = "qualify";
-  readonly maxDuration = 45;
+  readonly maxDuration = 60;
 
   private map: GameMap = beamRunMap();
   private colliders: RAPIER.Collider[] = [];
   private elapsed = 0;
+  private readonly finishOrder: string[] = [];
   private readonly finished = new Set<string>();
   private readonly springTimer = new Map<string, number>();
+  private qualifyTimer = Infinity;
+  private resolved = false;
 
   setup(ctx: MinigameContext): void {
     this.elapsed = 0;
+    this.finishOrder.length = 0;
     this.finished.clear();
     this.springTimer.clear();
+    this.qualifyTimer = Infinity;
+    this.resolved = false;
     this.map = beamRunMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -55,9 +64,10 @@ export class BeamRunMinigame implements IMinigame {
         continue;
       }
 
-      // Sweeper knockback.
       if (sim.bumperCooldown <= 0) {
+        // Spinning bars: jumping above the bar clears it.
         for (const s of this.map.sweepers) {
+          if (p.y > s.y + s.thickness / 2 + 0.5) continue;
           const hit = sweeperHit(s, t, p.x, p.z, PHYS.capsuleRadius);
           if (hit.hit) {
             sim.applyKnockback(hit.nx, hit.nz, SWEEP_KNOCK);
@@ -66,7 +76,19 @@ export class BeamRunMinigame implements IMinigame {
         }
       }
 
-      // Spring bounce.
+      if (sim.bumperCooldown <= 0) {
+        for (const b of this.map.bumpers) {
+          const dx = p.x - b.x;
+          const dz = p.z - b.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist <= b.radius + PHYS.capsuleRadius + PHYS.bumperTriggerPad) {
+            const inv = dist > 1e-4 ? 1 / dist : 0;
+            sim.applyKnockback(inv === 0 ? 1 : dx * inv, inv === 0 ? 0 : dz * inv, PHYS.knockStrength);
+            break;
+          }
+        }
+      }
+
       let cd = (this.springTimer.get(id) ?? 0) - dt;
       if (cd <= 0) {
         for (const s of this.map.springs) {
@@ -79,32 +101,52 @@ export class BeamRunMinigame implements IMinigame {
       }
       this.springTimer.set(id, cd);
 
-      // Checkpoints (bank the furthest passed line).
       for (const cz of this.map.checkpoints) {
         if (p.z >= cz) sim.setRespawn({ x: clampLane(p.x), y: 2, z: cz });
       }
 
-      // Finish.
       if (!this.finished.has(id) && this.map.finishZ != null && p.z >= this.map.finishZ) {
         this.finished.add(id);
+        this.finishOrder.push(id);
       }
     }
 
-    if (this.finished.size >= ctx.survivorsTarget()) {
-      for (const id of ctx.aliveIds()) if (!this.finished.has(id)) ctx.eliminate(id, "too slow");
+    // Open the qualify window when the first racer finishes.
+    if (this.qualifyTimer === Infinity && this.finishOrder.length > 0) {
+      this.qualifyTimer = QUALIFY_WINDOW;
     }
+    if (this.qualifyTimer !== Infinity) this.qualifyTimer -= dt;
 
-    if (this.elapsed >= this.maxDuration && ctx.aliveIds().length > ctx.survivorsTarget()) {
-      const ranked = ctx
-        .aliveIds()
-        .map((id) => ({ id, z: ctx.sims.get(id)!.position.z }))
-        .sort((a, b) => b.z - a.z);
-      for (const r of ranked.slice(ctx.survivorsTarget())) ctx.eliminate(r.id, "timeout");
+    const aliveCount = ctx.aliveIds().length;
+    const allFinished = this.finished.size >= aliveCount;
+    const windowExpired = this.qualifyTimer !== Infinity && this.qualifyTimer <= 0;
+    const timeUp = this.elapsed >= this.maxDuration;
+
+    if (!this.resolved && (allFinished || windowExpired || timeUp)) {
+      this.resolveRound(ctx);
+      this.resolved = true;
+    }
+  }
+
+  private resolveRound(ctx: MinigameContext): void {
+    const target = ctx.survivorsTarget();
+    const order = new Map<string, number>();
+    this.finishOrder.forEach((id, i) => order.set(id, i));
+    const ranked = ctx.aliveIds().slice().sort((a, b) => {
+      const fa = order.has(a);
+      const fb = order.has(b);
+      if (fa && fb) return order.get(a)! - order.get(b)!;
+      if (fa) return -1;
+      if (fb) return 1;
+      return ctx.sims.get(b)!.position.z - ctx.sims.get(a)!.position.z;
+    });
+    for (const id of ranked.slice(target)) {
+      ctx.eliminate(id, order.has(id) ? "slowest" : "did not finish");
     }
   }
 
   isComplete(ctx: MinigameContext): boolean {
-    return ctx.aliveIds().length <= ctx.survivorsTarget();
+    return this.resolved && ctx.aliveIds().length <= ctx.survivorsTarget();
   }
 
   teardown(ctx: MinigameContext): void {
@@ -115,9 +157,8 @@ export class BeamRunMinigame implements IMinigame {
   }
 
   botTarget(id: string): { x: number; z: number } {
-    // Send bots up a side lane (beyond the sweepers' reach) so they reliably finish.
     const side = id.charCodeAt(id.length - 1) % 2 === 0 ? BOT_LANE : -BOT_LANE;
-    return { x: side, z: (this.map.finishZ ?? 18) + 4 };
+    return { x: side, z: (this.map.finishZ ?? 18) + 6 };
   }
 }
 

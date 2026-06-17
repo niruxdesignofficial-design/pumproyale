@@ -50,9 +50,17 @@ export interface MapDeco {
   scale: number;
 }
 
+/** A big round bumper that bounces players outward. */
+export interface MapBumper {
+  x: number;
+  z: number;
+  radius: number;
+}
+
 export interface GameMap {
   boxes: MapBox[];
   sweepers: MapSweeper[];
+  bumpers: MapBumper[];
   springs: MapSpring[];
   decos: MapDeco[];
   spawns: Vec3[];
@@ -107,72 +115,78 @@ export function sweeperHit(
 
 const SPAWN_Y = 2;
 
-/** Obstacle race down a beam-swept lane to a finish gate. Side walls keep
- * players on the track; sweepers leave side lanes you can dodge through. */
+/** Wide, bright race with a few GIANT spinning bars to jump, big bumpers, a
+ * bounce pad, and a clear finish. Low side walls keep you on the track. */
 export function beamRunMap(): GameMap {
-  const laneHalf = 4.5;
-  const len = 44;
-  const cz = 0;
+  const half = 6;
+  const z0 = -18;
+  const z1 = 18;
+  const cz = (z0 + z1) / 2;
+  const len = z1 - z0;
   return {
     boxes: [
-      { type: "floor", cx: 0, cy: -0.25, cz, w: laneHalf * 2, h: 0.5, d: len },
-      { type: "wall", cx: -laneHalf - 0.2, cy: 0.75, cz, w: 0.4, h: 1.5, d: len },
-      { type: "wall", cx: laneHalf + 0.2, cy: 0.75, cz, w: 0.4, h: 1.5, d: len },
+      { type: "floor", cx: 0, cy: -0.4, cz, w: half * 2, h: 0.8, d: len },
+      { type: "wall", cx: -half - 0.4, cy: 0.7, cz, w: 0.8, h: 1.4, d: len },
+      { type: "wall", cx: half + 0.4, cy: 0.7, cz, w: 0.8, h: 1.4, d: len },
     ],
+    // Big low bars: full-width ones must be jumped; the partial one is dodged.
     sweepers: [
-      { cx: 0, cz: -8, y: 0.9, reach: 3.3, thickness: 0.7, speed: 1.6, phase: 0 },
-      { cx: 0, cz: 6, y: 0.9, reach: 3.3, thickness: 0.7, speed: -1.9, phase: 1.4 },
+      { cx: 0, cz: -8, y: 1.1, reach: 6.2, thickness: 1.4, speed: 1.2, phase: 0 },
+      { cx: 0, cz: 2, y: 1.1, reach: 4.6, thickness: 1.3, speed: -1.6, phase: 1.2 },
+      { cx: 0, cz: 11, y: 1.1, reach: 6.2, thickness: 1.4, speed: 1.5, phase: 2.2 },
     ],
-    springs: [
-      { x: -2.5, z: -2, y: 0, power: 12, r: 1.1 },
-      { x: 2.5, z: 12, y: 0, power: 12, r: 1.1 },
+    bumpers: [
+      { x: -3, z: -3, radius: 1.5 },
+      { x: 3, z: 6.5, radius: 1.5 },
     ],
-    decos: [
-      { prop: "signage_finish_wide", x: 0, y: 0, z: 19, rot: 0, scale: 1 },
-      { prop: "flag", x: -5, y: 0, z: 19, rot: 0, scale: 1 },
-      { prop: "flag", x: 5, y: 0, z: 19, rot: 0, scale: 1 },
-    ],
+    springs: [{ x: 0, z: -13, y: 0, power: 12, r: 1.4 }],
+    decos: [],
     spawns: [
-      { x: -3, y: SPAWN_Y, z: -19 },
-      { x: -1, y: SPAWN_Y, z: -19 },
-      { x: 1, y: SPAWN_Y, z: -19 },
-      { x: 3, y: SPAWN_Y, z: -19 },
+      { x: -3.5, y: SPAWN_Y, z: -16 },
+      { x: -1.2, y: SPAWN_Y, z: -16 },
+      { x: 1.2, y: SPAWN_Y, z: -16 },
+      { x: 3.5, y: SPAWN_Y, z: -16 },
     ],
-    checkpoints: [-19, -4, 8],
-    finishZ: 17,
+    checkpoints: [-16, -4, 7],
+    finishZ: 16,
     crown: null,
     killY: -8,
   };
 }
 
-/** Short gauntlet to a pedestal crown; first to touch it wins. */
+/** Short gauntlet to a pedestal crown; first to touch it wins. (Not in the
+ * default rotation, kept for variety.) */
 export function crownGrabMap(): GameMap {
   return {
     boxes: [
-      { type: "floor", cx: 0, cy: -0.25, cz: 5, w: 8, h: 0.5, d: 26 },
-      { type: "wall", cx: -4.2, cy: 0.75, cz: 5, w: 0.4, h: 1.5, d: 26 },
-      { type: "wall", cx: 4.2, cy: 0.75, cz: 5, w: 0.4, h: 1.5, d: 26 },
-      { type: "platform", cx: 0, cy: 0.4, cz: 15, w: 3, h: 0.8, d: 3 },
+      { type: "floor", cx: 0, cy: -0.4, cz: 6, w: 9, h: 0.8, d: 32 },
+      { type: "wall", cx: -4.9, cy: 0.7, cz: 6, w: 0.8, h: 1.4, d: 32 },
+      { type: "wall", cx: 4.9, cy: 0.7, cz: 6, w: 0.8, h: 1.4, d: 32 },
+      { type: "platform", cx: 0, cy: 0.5, cz: 18, w: 3.5, h: 1, d: 3.5 },
     ],
-    sweepers: [{ cx: 0, cz: 3, y: 0.9, reach: 3.1, thickness: 0.8, speed: 2.1, phase: 0 }],
-    springs: [],
-    decos: [{ prop: "crown", x: 0, y: 1.2, z: 15, rot: 0, scale: 1.6 }],
+    sweepers: [
+      { cx: 0, cz: 0, y: 1.1, reach: 4.7, thickness: 1.3, speed: 1.8, phase: 0 },
+      { cx: 0, cz: 10, y: 1.1, reach: 4.7, thickness: 1.3, speed: -2.0, phase: 1.5 },
+    ],
+    bumpers: [],
+    springs: [{ x: 0, z: 5, y: 0, power: 12, r: 1.3 }],
+    decos: [{ prop: "crown", x: 0, y: 1.4, z: 18, rot: 0, scale: 1.6 }],
     spawns: [
-      { x: -3, y: SPAWN_Y, z: -5 },
-      { x: -1, y: SPAWN_Y, z: -5 },
-      { x: 1, y: SPAWN_Y, z: -5 },
-      { x: 3, y: SPAWN_Y, z: -5 },
+      { x: -3, y: SPAWN_Y, z: -8 },
+      { x: -1, y: SPAWN_Y, z: -8 },
+      { x: 1, y: SPAWN_Y, z: -8 },
+      { x: 3, y: SPAWN_Y, z: -8 },
     ],
     checkpoints: [],
     finishZ: null,
-    crown: { x: 0, y: 1.7, z: 15 },
+    crown: { x: 0, y: 1.7, z: 18 },
     killY: -8,
   };
 }
 
 // --- Sinking Island tiles ----------------------------------------------------
 
-export const ISLAND = { cols: 7, rows: 7, tile: 2.0, thickness: 0.5 };
+export const ISLAND = { cols: 9, rows: 9, tile: 2.0, thickness: 0.5 };
 
 export interface IslandTile {
   x: number;
@@ -202,12 +216,12 @@ export const ISLAND_MAX_RING = Math.floor((Math.max(ISLAND.cols, ISLAND.rows) - 
 // --- Hex Fall (unchanged tile mechanic) -------------------------------------
 
 export const HEX = {
-  cols: 7,
-  rows: 6,
-  spacing: 2.15,
-  tileRadius: 1.05,
-  tileHeight: 0.4,
-  removeDelay: 0.7,
+  cols: 8,
+  rows: 8,
+  spacing: 2.7,
+  tileRadius: 1.45,
+  tileHeight: 0.5,
+  removeDelay: 0.9,
 };
 
 export function hexTilePositions(): { x: number; z: number }[] {

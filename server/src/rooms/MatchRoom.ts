@@ -23,12 +23,13 @@ import { MatchState, PlayerState } from "./schema";
 /** Lobby fill window once the first human joins (seconds). */
 const FILL_WAIT = 8;
 const COUNTDOWN = 4;
+const INTRO_TIME = 3.5;
 const END_SCREEN = 12;
 const MIN_HUMANS = 1;
 /** Generous cap above the ~30 Hz client send rate; excess input is dropped. */
 const MAX_INPUTS_PER_SECOND = 90;
 
-type Phase = "waiting" | "countdown" | "playing" | "ended";
+type Phase = "waiting" | "countdown" | "intro" | "playing" | "ended";
 
 /**
  * Authoritative match room with the full Phase 4 flow:
@@ -52,6 +53,7 @@ export class MatchRoom extends Room<MatchState> {
   private spawnCounter = 0;
   private botCounter = 0;
   private botSeq = 0;
+  private colorCounter = 0;
 
   private fillTimer = FILL_WAIT;
   private phaseTimer = 0;
@@ -96,6 +98,7 @@ export class MatchRoom extends Room<MatchState> {
     player.name = sanitizeName(options?.name) ?? `Player-${this.spawnCounter}`;
     player.wallet = typeof options?.wallet === "string" ? options.wallet.slice(0, 64) : "";
     player.character = isValidCharacter(options?.character) ? options.character : "knight";
+    player.colorIndex = this.colorCounter++;
     player.x = spawn.x;
     player.y = spawn.y;
     player.z = spawn.z;
@@ -133,6 +136,9 @@ export class MatchRoom extends Room<MatchState> {
       case "countdown":
         this.updateCountdown(dt);
         break;
+      case "intro":
+        this.updateIntro(dt);
+        break;
       case "playing":
         this.updatePlaying(dt);
         break;
@@ -144,7 +150,10 @@ export class MatchRoom extends Room<MatchState> {
 
   /** Step physics for all sims and publish transforms. */
   private simulate(dt: number): void {
-    const allowRespawn = this.state.phase === "waiting" || this.state.phase === "countdown";
+    const allowRespawn =
+      this.state.phase === "waiting" ||
+      this.state.phase === "countdown" ||
+      this.state.phase === "intro";
 
     for (const [id, sim] of this.sims) {
       const ai = this.bots.get(id);
@@ -185,9 +194,18 @@ export class MatchRoom extends Room<MatchState> {
     this.phaseTimer -= dt;
     this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
     if (this.phaseTimer <= 0) {
-      this.state.phase = "playing";
       this.roundIndex = 0;
-      this.startRound();
+      this.startRound(); // enters the "intro" phase
+    }
+  }
+
+  private updateIntro(dt: number): void {
+    this.phaseTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+    if (this.phaseTimer <= 0) {
+      this.state.phase = "playing";
+      this.roundElapsed = 0;
+      this.state.roundClock = 0;
     }
   }
 
@@ -232,10 +250,14 @@ export class MatchRoom extends Room<MatchState> {
     this.minigame = this.roundPlan[idx]!;
     this.roundElapsed = 0;
     this.state.roundClock = 0;
-    // Eliminate one player per round so the match ladders down to a single winner.
-    this.survivorsTarget = Math.max(1, this.sims.size - 1);
+    // The last round decides the winner (down to 1); earlier rounds eliminate one.
+    const isFinal = this.roundIndex >= this.roundPlan.length - 1;
+    this.survivorsTarget = isFinal ? 1 : Math.max(1, this.sims.size - 1);
     this.state.round = this.roundIndex + 1;
     this.minigame.setup(this.ctx);
+    // Brief intro so the round/map transition reads clearly to players.
+    this.state.phase = "intro";
+    this.phaseTimer = INTRO_TIME;
     console.log(
       `[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name} ` +
         `(survivors target ${this.survivorsTarget})`,
@@ -295,6 +317,7 @@ export class MatchRoom extends Room<MatchState> {
     player.name = `Bot-${this.botCounter}`;
     player.isBot = true;
     player.character = CHARACTER_IDS[this.botCounter % CHARACTER_IDS.length]!;
+    player.colorIndex = this.colorCounter++;
     player.x = spawn.x;
     player.y = spawn.y;
     player.z = spawn.z;
@@ -304,6 +327,9 @@ export class MatchRoom extends Room<MatchState> {
   private eliminate(id: string, reason: string): void {
     const sim = this.sims.get(id);
     if (!sim) return;
+    // Never eliminate the last player standing: they win, even if several fall
+    // on the same tick. Guarantees endMatch always has a winner.
+    if (this.sims.size <= 1) return;
     const before = this.sims.size;
     const player = this.state.players.get(id);
     if (player) {

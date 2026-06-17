@@ -8,6 +8,7 @@ export class PlayerState extends Schema {
   name = "";
   wallet = "";
   character = "knight";
+  colorIndex = 0;
   x = 0;
   y = 0;
   z = 0;
@@ -24,6 +25,7 @@ defineTypes(PlayerState, {
   name: "string",
   wallet: "string",
   character: "string",
+  colorIndex: "number",
   x: "number",
   y: "number",
   z: "number",

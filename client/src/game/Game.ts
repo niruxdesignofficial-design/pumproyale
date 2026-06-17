@@ -1,6 +1,7 @@
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { getStateCallbacks, type Room } from "colyseus.js";
-import { MAX_PLAYERS, type AnimationState, type InputIntent } from "@party-royale/shared";
+import { MAX_PLAYERS, teamColor, type AnimationState, type InputIntent } from "@party-royale/shared";
 import { Renderer } from "../core/Renderer";
 import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
@@ -13,7 +14,6 @@ import { SafeZone } from "./SafeZone";
 import { MinigameViews } from "./MinigameViews";
 import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
-import { preloadProps } from "./MapBuilder";
 import { getSelectedCharacter } from "./selection";
 import { gameStore } from "./store";
 
@@ -23,6 +23,7 @@ const SEND_INTERVAL = 1 / 30;
 
 /** Minimal shape of synced match state read directly each frame for rendering. */
 interface MatchStateView {
+  phase: string;
   minigame: string;
   roundClock: number;
   tiles: ArrayLike<boolean>;
@@ -33,6 +34,7 @@ interface NetPlayer {
   name: string;
   wallet: string;
   character: string;
+  colorIndex: number;
   x: number;
   y: number;
   z: number;
@@ -60,6 +62,7 @@ export class Game {
   private readonly minigameViews: MinigameViews;
 
   private readonly avatars = new Map<string, Avatar>();
+  private readonly aliveAvatars = new Set<string>();
   private localId: string | null = null;
   private localAlive = true;
   private cameraSnapped = false;
@@ -77,6 +80,10 @@ export class Game {
     this.renderer = new Renderer(canvas);
     const built = createScene();
     this.scene = built.scene;
+    // Soft, even environment lighting (the KayKit clay sheen + clean GI feel).
+    const pmrem = new THREE.PMREMGenerator(this.renderer.instance);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
     this.scene.add(this.zone.object3d);
     this.minigameViews = new MinigameViews(built.scene, built.platform, built.grid);
     this.cameraRig = new CameraRig(canvas, this.aspect());
@@ -86,7 +93,7 @@ export class Game {
   }
 
   async start(): Promise<void> {
-    await Promise.all([preloadCharacters(), preloadProps()]);
+    await preloadCharacters();
     if (this.disposed) return;
 
     let room: Room;
@@ -135,11 +142,12 @@ export class Game {
     const $ = getStateCallbacks(room);
 
     $(room.state).players?.onAdd((player: NetPlayer, sessionId: string) => {
-      const avatar = new Avatar(player.character, colorForId(sessionId));
+      const avatar = new Avatar(player.character, teamColor(player.colorIndex));
       avatar.setTarget(player.x, player.y, player.z, player.yaw);
       avatar.setAnim(asAnim(player.anim));
       this.scene.add(avatar.object3d);
       this.avatars.set(sessionId, avatar);
+      if (player.alive) this.aliveAvatars.add(sessionId);
       gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
 
       if (sessionId === this.localId && !this.cameraSnapped) {
@@ -151,6 +159,8 @@ export class Game {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
         avatar.setAnim(asAnim(player.anim));
         avatar.setEliminated(!player.alive);
+        if (player.alive) this.aliveAvatars.add(sessionId);
+        else this.aliveAvatars.delete(sessionId);
         if (sessionId === this.localId) {
           this.localAlive = player.alive;
           gameStore.set({ localAlive: player.alive, localPlacement: player.placement });
@@ -165,6 +175,7 @@ export class Game {
         avatar.dispose();
         this.avatars.delete(sessionId);
       }
+      this.aliveAvatars.delete(sessionId);
       gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
     });
 
@@ -199,13 +210,20 @@ export class Game {
 
     const st = this.net.room?.state as unknown as MatchStateView | undefined;
     if (st) {
-      this.minigameViews.setMinigame(typeof st.minigame === "string" ? st.minigame : "");
-      this.minigameViews.update(typeof st.roundClock === "number" ? st.roundClock : 0, st.tiles);
+      // During the intro/lobby phases no minigame map should show.
+      const showMap = st.phase === "playing" || st.phase === "intro";
+      this.minigameViews.setMinigame(showMap && typeof st.minigame === "string" ? st.minigame : "");
+      this.minigameViews.update(dt, typeof st.roundClock === "number" ? st.roundClock : 0, st.tiles);
     }
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
-    this.cameraRig.follow(local && this.localAlive ? local.position : CENTER);
-    this.cameraRig.update();
+    if (local && this.localAlive) {
+      this.cameraRig.follow(local.position);
+      this.cameraRig.update();
+    } else {
+      // Spectating: frame a living player directly (no OrbitControls update).
+      this.cameraRig.spectate(this.followTarget(local));
+    }
     this.renderer.render(this.scene, this.cameraRig.camera);
 
     this.fpsAccum += dt;
@@ -214,6 +232,16 @@ export class Game {
       gameStore.set({ fps: this.loop.getFps() });
     }
   };
+
+  /** Follow the local player while alive; otherwise spectate a living player. */
+  private followTarget(local: Avatar | undefined): THREE.Vector3 {
+    if (local && this.localAlive) return local.position;
+    for (const id of this.aliveAvatars) {
+      const a = this.avatars.get(id);
+      if (a) return a.position;
+    }
+    return local ? local.position : CENTER;
+  }
 
   private sampleInput(): InputIntent {
     const f = (this.input.isActive("forward") ? 1 : 0) - (this.input.isActive("back") ? 1 : 0);
@@ -255,13 +283,6 @@ export class Game {
 const ANIM_STATES = new Set(["idle", "run", "jump", "fall", "dive", "hit", "win", "lose"]);
 function asAnim(value: string): AnimationState {
   return (ANIM_STATES.has(value) ? value : "idle") as AnimationState;
-}
-
-function colorForId(id: string): number {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  const hue = (hash % 360) / 360;
-  return new THREE.Color().setHSL(hue, 0.65, 0.55).getHex();
 }
 
 function randomName(): string {

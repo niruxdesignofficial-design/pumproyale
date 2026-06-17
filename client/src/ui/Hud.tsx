@@ -75,6 +75,14 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
         <div className="hud-center-big">{state.timer > 0 ? state.timer : "Go!"}</div>
       )}
 
+      {state.matchPhase === "intro" && (
+        <div className="hud-intro">
+          <div className="hud-intro-round">Round {state.round}</div>
+          <div className="hud-intro-name">{state.minigame}</div>
+          <div className="hud-intro-go">{state.timer > 0 ? `Get ready... ${state.timer}` : "Go!"}</div>
+        </div>
+      )}
+
       {state.matchPhase === "playing" && !state.localAlive && (
         <div className="hud-warn">
           Eliminated{state.localPlacement > 0 ? ` - placed #${state.localPlacement}` : ""}.

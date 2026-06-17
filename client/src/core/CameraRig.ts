@@ -16,7 +16,7 @@ export class CameraRig {
   private readonly delta = new THREE.Vector3();
 
   constructor(domElement: HTMLElement, aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 200);
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 600);
     this.camera.position.set(0, 4, 9);
 
     this.controls = new OrbitControls(this.camera, domElement);
@@ -53,6 +53,23 @@ export class CameraRig {
     this.delta.copy(this.smoothedTarget).sub(this.controls.target);
     this.controls.target.add(this.delta);
     this.camera.position.add(this.delta);
+  }
+
+  /**
+   * Spectator framing: sit behind and above the target, looking down at it.
+   * Sets the camera directly and points it at the target (do NOT call update()
+   * after this, or OrbitControls would snap the camera back to its orbit).
+   */
+  spectate(target: THREE.Vector3): void {
+    this.smoothedTarget.lerp(this.tmp.set(target.x, target.y + 1, target.z), 0.1);
+    this.controls.target.copy(this.smoothedTarget);
+    const desired = this.delta.set(
+      this.smoothedTarget.x,
+      this.smoothedTarget.y + 7,
+      this.smoothedTarget.z + 13,
+    );
+    this.camera.position.lerp(desired, 0.06);
+    this.camera.lookAt(this.smoothedTarget);
   }
 
   /** Camera-relative forward direction projected on the ground plane. */

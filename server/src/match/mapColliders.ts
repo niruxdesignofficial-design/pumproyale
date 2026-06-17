@@ -9,11 +9,20 @@ import type { PhysicsWorld } from "../physics/PhysicsWorld";
  */
 export function buildMapColliders(physics: PhysicsWorld, map: GameMap): RAPIER.Collider[] {
   const world = physics.world;
-  return map.boxes.map((b) =>
+  const colliders = map.boxes.map((b) =>
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(b.w / 2, b.h / 2, b.d / 2).setTranslation(b.cx, b.cy, b.cz),
     ),
   );
+  // Bumpers are solid (and bounce via the minigame knockback).
+  for (const bm of map.bumpers) {
+    colliders.push(
+      world.createCollider(
+        RAPIER.ColliderDesc.cylinder(0.75, bm.radius).setTranslation(bm.x, 0.75, bm.z),
+      ),
+    );
+  }
+  return colliders;
 }
 
 export function removeColliders(physics: PhysicsWorld, colliders: RAPIER.Collider[]): void {

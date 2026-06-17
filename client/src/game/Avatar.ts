@@ -32,11 +32,17 @@ export class Avatar {
     const gltf = getCharacterGltf(characterId);
     if (gltf) {
       const model = cloneSkeleton(gltf.scene);
+      const tint = new THREE.Color(ringColor);
       model.traverse((obj) => {
         const mesh = obj as THREE.Mesh;
         if (mesh.isMesh) {
           mesh.castShadow = true;
           mesh.receiveShadow = true;
+          // Vivid per-player team color: clone materials and push toward the tint.
+          const m = mesh.material;
+          mesh.material = Array.isArray(m)
+            ? m.map((x) => this.tintMaterial(x, tint))
+            : this.tintMaterial(m, tint);
         }
       });
       this.object3d.add(model);
@@ -96,6 +102,15 @@ export class Avatar {
     this.mixer?.stopAllAction();
     for (const d of this.disposables) d.dispose();
     this.object3d.clear();
+  }
+
+  private tintMaterial(material: THREE.Material, tint: THREE.Color): THREE.Material {
+    const cloned = material.clone();
+    const std = cloned as THREE.MeshStandardMaterial;
+    // Keep the KayKit texture detail; nudge toward the team color for identity.
+    if (std.color) std.color.lerp(tint, 0.4);
+    this.disposables.push(cloned);
+    return cloned;
   }
 
   private addRing(color: number): void {

@@ -15,10 +15,12 @@ export class Renderer {
       powerPreference: "high-performance",
     });
     this.instance.outputColorSpace = THREE.SRGBColorSpace;
-    this.instance.toneMapping = THREE.ACESFilmicToneMapping;
-    this.instance.toneMappingExposure = 1.0;
+    // Neutral tone mapping keeps the candy palette saturated and clean.
+    this.instance.toneMapping = THREE.NeutralToneMapping;
+    this.instance.toneMappingExposure = 1.05;
     this.instance.shadowMap.enabled = true;
-    this.instance.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Softest shadows for the clay / soft low-poly look.
+    this.instance.shadowMap.type = THREE.VSMShadowMap;
     this.instance.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   }
 
