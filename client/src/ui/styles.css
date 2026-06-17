@@ -879,3 +879,132 @@ body,
   padding: 2px 16px;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
+
+/* =======================================================================
+   Legibility / pro overhaul: one font, higher-contrast panels, clear layering,
+   readable scoreboard, unified buttons, a light responsive guard.
+   ======================================================================= */
+
+/* One consistent game font across all HUD/menu/leaderboard/medal text. */
+.hud-panel,
+.hud-title,
+.hud-sub,
+.hud-label,
+.hud-value,
+.hud-stat,
+.hud-hint,
+.hud-dim,
+.lb,
+.lb-toggle,
+.lb-head,
+.lb-row,
+.medal-line,
+.medal-rank,
+.medal-name,
+.medal-pts,
+.lobby-bar-sub,
+.lobby-player,
+.name-label,
+.game-sub,
+.menu-hint,
+.wallet-badge,
+.wallet-net {
+  font-family: "Kenney Future Narrow", system-ui, sans-serif;
+}
+
+/* Higher-contrast panels so text reads over the bright 3D scene. */
+.hud-panel {
+  background: rgba(10, 14, 24, 0.9);
+  border-color: rgba(140, 165, 210, 0.3);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.42);
+  font-size: 14px;
+}
+.hud-topright {
+  min-width: 210px;
+}
+.hud-stat {
+  font-size: 14px;
+  gap: 18px;
+}
+.hud-sub {
+  font-size: 13px;
+}
+
+/* Explicit layering for the top-center stack (never overlap). */
+.hud-clock {
+  top: 14px;
+  z-index: 20;
+}
+.hud-soccer {
+  top: 66px;
+  z-index: 19;
+  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 0 22px rgba(87, 193, 255, 0.22);
+}
+.hud-banner {
+  top: 31%;
+  z-index: 30;
+  box-shadow:
+    0 0 44px rgba(255, 111, 174, 0.5),
+    0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.hud-intro-name {
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+}
+.medal-line {
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* Unify the wallet buttons with the game button style. */
+.wallet-signin,
+.wallet-claim {
+  font-family: "Kenney Future Narrow", system-ui, sans-serif;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transition:
+    transform 0.07s ease,
+    filter 0.1s ease;
+}
+.wallet-signin {
+  background: linear-gradient(180deg, #7fe0ff, #3aa0ff);
+  color: #06204a;
+}
+.wallet-signin:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+.wallet-claim {
+  background: linear-gradient(180deg, #8df0b0, #3ad07e);
+  color: #06301a;
+}
+.lb-row {
+  font-size: 14px;
+}
+
+/* Light responsive guard so panels shrink on small screens. */
+@media (max-width: 820px) {
+  .game-title {
+    font-size: 56px;
+  }
+  .hud-clock {
+    font-size: 30px;
+  }
+  .hud-soccer {
+    font-size: 18px;
+  }
+  .hud-banner {
+    font-size: 26px;
+  }
+  .hud-topright {
+    min-width: 150px;
+  }
+  .lb-panel {
+    width: 260px;
+  }
+}

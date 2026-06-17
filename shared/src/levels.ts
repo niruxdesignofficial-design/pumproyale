@@ -299,6 +299,13 @@ export function footballMap(): MinigameMap {
     { model: "flag_teamYellow", x: halfX - 0.6, y: 0, z: halfZ - 0.6, size: 1.4 },
   );
 
+  // Two midfield ramps the ball and players ride over (a bit of chaos/variety).
+  for (const sx of [-4.5, 4.5]) {
+    const pitch = 0.26;
+    colliders.push({ x: sx, y: 0.45, z: 0, hx: 2.2, hy: 0.25, hz: 2.8, pitch });
+    props.push({ model: "tileSlopeLowMedium_teamYellow", x: sx, y: 0, z: 0, size: 4, pitch });
+  }
+
   // Tall invisible side walls (full length).
   for (const x of [-halfX - 0.4, halfX + 0.4]) {
     const w = wall("x", x, -halfZ, halfZ, wallH, "barrierLarge");
@@ -431,26 +438,36 @@ const CLIMB_FORK: ClimbStep = { x: 0, y: 1, z: -5.5, w: 10, d: 3 };
  */
 function buildEasyRoute(): ClimbStep[] {
   const out: ClimbStep[] = [];
-  const n = 26;
+  const n = 32;
   for (let i = 1; i <= n; i++) {
     const t = i / n;
-    const y = 1.6 + t * 6.4; // ~2 -> 8
-    const z = -3 + (i - 1) * 0.72; // advance toward the summit (ends ~z15)
-    const x = -4.5 + Math.sin(i * 0.8) * 3.8; // weave between ~ -8.3 and -0.7
-    out.push({ x, y, z, w: 2.9, d: 2.6 });
+    const y = 1.6 + t * 6.2; // gentle rise to ~7.8
+    const z = -3 + (i - 1) * 0.62; // advance toward the summit (ends ~z16)
+    // Wide weave pushed to the -x side at the bottom, funnelling back toward the
+    // summit (x~0) at the top so the final hop onto the win platform is reachable.
+    const center = -5.5 * (1 - t);
+    const amp = 5.2 * (1 - t * 0.7);
+    const x = center + Math.sin(i * 0.72) * amp;
+    out.push({ x, y, z, w: 2.7, d: 2.5 });
   }
   return out;
 }
 export const CLIMB_EASY: ClimbStep[] = buildEasyRoute();
 
-/** HARD route (yellow, the SHORT one): steep narrow steps with hazards. */
+/**
+ * HARD route (yellow, the OBSTACLE one): wide, gentle steps so the platforming is
+ * easy — the challenge is the obstacles (sweepers, spike rollers, launched balls).
+ * "More developed but less difficult."
+ */
 export const CLIMB_HARD: ClimbStep[] = [
-  { x: 4, y: 2.3, z: -2.0, w: 3.6, d: 2.6 },
-  { x: 5, y: 3.25, z: 1.0, w: 3.4, d: 2.4 },
-  { x: 5, y: 4.2, z: 4.0, w: 3.4, d: 2.4 },
-  { x: 4.5, y: 5.2, z: 7.0, w: 3.4, d: 2.4 },
-  { x: 4, y: 6.2, z: 10.0, w: 3.4, d: 2.4 },
-  { x: 3.5, y: 7.2, z: 13.0, w: 3.6, d: 2.6 },
+  { x: 4.5, y: 2.2, z: -2.0, w: 5, d: 3.4 },
+  { x: 5.5, y: 3.0, z: 0.6, w: 4.8, d: 3.2 },
+  { x: 5.5, y: 3.8, z: 3.2, w: 4.8, d: 3.2 },
+  { x: 5, y: 4.6, z: 5.8, w: 4.8, d: 3.2 },
+  { x: 4.5, y: 5.4, z: 8.4, w: 4.8, d: 3.2 },
+  { x: 4.5, y: 6.2, z: 11.0, w: 4.8, d: 3.2 },
+  { x: 4.5, y: 7.0, z: 13.6, w: 5, d: 3.4 },
+  { x: 4, y: 7.8, z: 16.0, w: 5, d: 3.4 },
 ];
 
 /** The raised WIN platform: climb onto it to win the round. Both routes hop up. */
@@ -510,24 +527,27 @@ export function climbMap(): MinigameMap {
   for (const s of CLIMB_HARD) props.push(...tileStep(s, "tileLarge_teamYellow"));
   props.push(...tileStep(CLIMB_SUMMIT, "tileLarge_teamYellow"));
 
-  // Hard-route rotating sweepers.
+  // Hard-route rotating sweepers (more developed — three bars up the climb).
   const sweepers: MapSweeper[] = [
-    sweeperOn(CLIMB_HARD[1]!, 1.7, 0, "swiperLong_teamRed"),
-    sweeperOn(CLIMB_HARD[3]!, -1.8, 1.2, "swiperLong_teamBlue"),
+    sweeperOn(CLIMB_HARD[1]!, 1.5, 0, "swiperLong_teamRed"),
+    sweeperOn(CLIMB_HARD[3]!, -1.6, 1.0, "swiperLong_teamBlue"),
+    sweeperOn(CLIMB_HARD[5]!, 1.7, 2.0, "swiperLong_teamYellow"),
   ];
 
-  // Hard-route spike roller.
+  // Hard-route spike rollers (off-center so the wide platforms stay passable).
   const hazards: MapHazard[] = [
-    { x: CLIMB_HARD[2]!.x - 1.0, y: CLIMB_HARD[2]!.y, z: CLIMB_HARD[2]!.z, radius: 1.2, model: "spikeRoller" },
+    { x: CLIMB_HARD[2]!.x - 1.4, y: CLIMB_HARD[2]!.y, z: CLIMB_HARD[2]!.z, radius: 1.2, model: "spikeRoller" },
+    { x: CLIMB_HARD[6]!.x + 1.4, y: CLIMB_HARD[6]!.y, z: CLIMB_HARD[6]!.z, radius: 1.2, model: "spikeRoller" },
   ];
   for (const h of hazards) {
     props.push({ model: h.model, x: h.x, y: h.y, z: h.z, size: 2.0, anchor: "top" });
   }
 
-  // Side barrels that launch balls across the hard route.
+  // Side barrels that launch balls across the hard route (three of them).
   const launchers: MapLauncher[] = [
     launcherAcross(CLIMB_HARD[0]!, 0),
-    launcherAcross(CLIMB_HARD[2]!, 1.5),
+    launcherAcross(CLIMB_HARD[3]!, 1.2),
+    launcherAcross(CLIMB_HARD[6]!, 2.2),
   ];
   for (const l of launchers) {
     props.push({ model: l.model, x: l.x, y: l.y, z: l.z, size: 1.8, anchor: "bottom", yaw: Math.PI / 2 });
@@ -547,9 +567,9 @@ export function climbMap(): MinigameMap {
     { model: "star", x: sx + 2, y: sy + 0.4, z: sz, size: 1.2, anchor: "center" },
     { model: "flag_teamBlue", x: -3, y: CLIMB_FORK.y, z: CLIMB_FORK.z + 1, size: 1.6 },
     { model: "flag_teamYellow", x: 3, y: CLIMB_FORK.y, z: CLIMB_FORK.z + 1, size: 1.6 },
-    { model: "tree_forest", x: -7, y: 0, z: -9, size: 3.5 },
-    { model: "tree_forest", x: 7, y: 0, z: -9, size: 3 },
-    { model: "rocksB_forest", x: -5, y: 0, z: -6, size: 2 },
+    { model: "tree_forest", x: -10, y: 0, z: -8, size: 3.5 },
+    { model: "tree_forest", x: 10, y: 0, z: -8, size: 3 },
+    { model: "rocksB_forest", x: -8, y: 0, z: -5, size: 2 },
   );
 
   return {
@@ -670,15 +690,18 @@ export function gemsMap(): MinigameMap {
 
 // --- Lobby parkour (playable while waiting) ---------------------------------
 
-/** Jump platforms forming a loop you can warm up on while waiting for players. */
+/** A symmetric arch of jump platforms (up to a flag apex, then back down) to warm
+ * up on while waiting for players. */
 const LOBBY_STEPS: ClimbStep[] = [
-  { x: -6, y: 1.0, z: -3, w: 3, d: 3 },
-  { x: -3, y: 2.0, z: -7, w: 3, d: 3 },
-  { x: 1, y: 3.0, z: -9, w: 3.5, d: 3 },
-  { x: 5, y: 3.8, z: -7, w: 3.5, d: 3.5 }, // high landing
-  { x: 7, y: 2.6, z: -2, w: 3, d: 3 },
-  { x: 6, y: 1.4, z: 3, w: 3, d: 3 }, // back down toward the plaza
+  { x: -6, y: 1.0, z: -2, w: 3.2, d: 3 },
+  { x: -7, y: 2.0, z: -6, w: 3, d: 3 },
+  { x: -4, y: 3.0, z: -9, w: 3, d: 3 },
+  { x: 0, y: 4.2, z: -10.5, w: 4, d: 3.5 }, // apex (flag)
+  { x: 4, y: 3.0, z: -9, w: 3, d: 3 },
+  { x: 7, y: 2.0, z: -6, w: 3, d: 3 },
+  { x: 6, y: 1.0, z: -2, w: 3.2, d: 3 },
 ];
+const LOBBY_APEX = LOBBY_STEPS[3]!;
 
 /**
  * A small, self-contained lobby parkour: a plaza with a ramp + a loop of jump
@@ -711,13 +734,14 @@ export function lobbyMap(): MinigameMap {
   colliders.push({ x: -8, y: 0.5, z: 1, hx: 1.6, hy: 0.25, hz: 3.2, pitch: rampPitch });
   props.push({ model: "tileSlopeLowMedium_teamBlue", x: -8, y: 0, z: 1, size: 3.4, pitch: rampPitch });
 
-  // Decor + a "warm up" flag.
+  // A flag on the apex platform + decor.
   props.push(
-    { model: "flag_teamYellow", x: 0, y: 0, z: -10, size: 2.2 },
-    { model: "tree_forest", x: -9, y: 0, z: -9, size: 3.5 },
-    { model: "tree_forest", x: 9, y: 0, z: 9, size: 3.5 },
-    { model: "plantA_forest", x: 9, y: 0, z: -9, size: 1.6 },
-    { model: "rocksB_forest", x: -9, y: 0, z: 9, size: 2 },
+    { model: "flag_teamYellow", x: LOBBY_APEX.x, y: LOBBY_APEX.y, z: LOBBY_APEX.z, size: 2.4 },
+    { model: "star", x: LOBBY_APEX.x, y: LOBBY_APEX.y + 0.6, z: LOBBY_APEX.z - 1.2, size: 1.1, anchor: "center" },
+    { model: "tree_forest", x: -9, y: 0, z: 8, size: 3.5 },
+    { model: "tree_forest", x: 9, y: 0, z: 8, size: 3.5 },
+    { model: "plantA_forest", x: 9, y: 0, z: -8, size: 1.6 },
+    { model: "rocksB_forest", x: -9, y: 0, z: 8, size: 2 },
   );
 
   return {

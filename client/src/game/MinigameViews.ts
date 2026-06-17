@@ -36,7 +36,8 @@ interface NetEntity {
  * minigame is shown.
  */
 export class MinigameViews {
-  private container = new THREE.Group();
+  /** Stable container for the active map (used as the camera-occlusion root). */
+  readonly container = new THREE.Group();
   private active: Active = "none";
   private entityMeshes: (THREE.Object3D | null)[] = [];
   private entityKeys: string[] = [];
@@ -46,7 +47,7 @@ export class MinigameViews {
   private falling: boolean[] = [];
 
   constructor(
-    private readonly scene: THREE.Scene,
+    scene: THREE.Scene,
     private readonly platform: THREE.Mesh,
     private readonly grid: THREE.GridHelper,
   ) {
@@ -58,9 +59,8 @@ export class MinigameViews {
     if (next === this.active) return;
     this.active = next;
 
-    this.scene.remove(this.container);
     disposeGroup(this.container);
-    this.container = new THREE.Group();
+    this.container.clear();
     this.entityMeshes = [];
     this.entityKeys = [];
     this.swipers = [];
@@ -102,8 +102,6 @@ export class MinigameViews {
       }
     }
     if (next === "gems") this.buildCrumble();
-
-    this.scene.add(this.container);
   }
 
   update(

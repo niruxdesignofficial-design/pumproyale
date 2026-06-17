@@ -25,21 +25,22 @@ interface Climber {
 }
 
 /**
- * Climb to the flag via one of two routes (a long easy one or a short hard one
- * with sweepers, a spike roller, and side barrels that launch balls across the
- * path). Only players who reach the flag score, ranked by finish order; everyone
- * else gets nothing. 40s.
+ * Climb to the flag via one of two routes: a long, wide-weaving JUMP course (blue)
+ * or a short, gentle but obstacle-packed route (yellow). Only players who reach the
+ * win platform score, ranked by finish order; everyone else gets nothing.
  */
 export class ClimbMinigame implements IMinigame {
   readonly id = "climb";
   readonly name = "Tower Climb";
-  readonly maxDuration = 60;
+  readonly maxDuration = 70;
 
   private map: MinigameMap = climbMap();
   private colliders: RAPIER.Collider[] = [];
   private readonly platforms: ClimbStep[] = climbPlatforms();
   private readonly summit = climbSummit();
   private readonly climbers = new Map<string, Climber>();
+  /** Per-bot progress index along its route (so bots follow the weave reliably). */
+  private readonly botProgress = new Map<string, number>();
   private finishOrder = 0;
   private elapsed = 0;
 
@@ -47,6 +48,7 @@ export class ClimbMinigame implements IMinigame {
     this.elapsed = 0;
     this.finishOrder = 0;
     this.climbers.clear();
+    this.botProgress.clear();
     this.map = climbMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -140,19 +142,26 @@ export class ClimbMinigame implements IMinigame {
     ctx.setPlatformEnabled(true);
   }
 
-  /** Route-aware climbing bot: head to the next waypoint, jump bars/balls. */
+  /**
+   * Route-aware climbing bot: walk the chosen route waypoint-by-waypoint (advancing
+   * progress as it reaches each one, so it follows the weave instead of cutting),
+   * and hop sweeper bars / launched balls that are on top of it.
+   */
   botPlan(id: string, ctx: MinigameContext): BotPlan {
     const sim = ctx.sims.get(id);
     if (!sim) return { tx: 0, tz: 0 };
     const p = sim.position;
     const route = ctx.botIndex(id) % 2 === 0 ? CLIMB_ROUTES.easy : CLIMB_ROUTES.hard;
-    let target: ClimbStep = this.summit;
-    for (const s of route) {
-      if (s.y > p.y + 0.4) {
-        target = s;
-        break;
-      }
+
+    // Advance the progress index when close to the current waypoint.
+    let idx = this.botProgress.get(id) ?? 0;
+    const cur = route[Math.min(idx, route.length - 1)]!;
+    const near = Math.hypot(p.x - cur.x, p.z - cur.z) < 1.8 && p.y >= cur.y - 0.6;
+    if (near && idx < route.length - 1) {
+      idx += 1;
+      this.botProgress.set(id, idx);
     }
+    const target = route[Math.min(idx, route.length - 1)]!;
 
     // Hop sweeper bars / launched balls that are right on top of us.
     let jump = false;
