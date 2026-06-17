@@ -30,9 +30,13 @@ export interface MinigameContext {
  * players as appropriate), reports when the round is over, and cleans up in
  * teardown. Registering a new minigame is all it takes to add one to rotation.
  */
+export type MinigameType = "qualify" | "survival" | "final";
+
 export interface IMinigame {
   readonly id: string;
   readonly name: string;
+  /** Round category, used by the match director to sequence rounds. */
+  readonly type: MinigameType;
   /** Hard cap on round length (seconds); the room enforces a failsafe finish. */
   readonly maxDuration: number;
   setup(ctx: MinigameContext): void;

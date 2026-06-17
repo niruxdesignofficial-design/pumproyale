@@ -13,6 +13,7 @@ import { SafeZone } from "./SafeZone";
 import { MinigameViews } from "./MinigameViews";
 import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
+import { preloadProps } from "./MapBuilder";
 import { getSelectedCharacter } from "./selection";
 import { gameStore } from "./store";
 
@@ -85,7 +86,7 @@ export class Game {
   }
 
   async start(): Promise<void> {
-    await preloadCharacters();
+    await Promise.all([preloadCharacters(), preloadProps()]);
     if (this.disposed) return;
 
     let room: Room;

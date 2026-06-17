@@ -160,7 +160,20 @@ export class PlayerSim {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.diving = false;
     this.knockLock = 0;
+    this.extX = 0;
+    this.extZ = 0;
     this.fellOff = false;
+  }
+
+  /** Set the respawn point without teleporting (race checkpoints). */
+  setRespawn(spawn: { x: number; y: number; z: number }): void {
+    this.spawn = spawn;
+  }
+
+  /** Launch upward (spring pad). */
+  bounce(power: number): void {
+    const v = this.body.linvel();
+    this.body.setLinvel({ x: v.x, y: power, z: v.z }, true);
   }
 
   get position(): RAPIER.Vector {

@@ -1,69 +1,197 @@
-// Minigame level layouts shared by the authoritative server (colliders + physics
-// motion) and the client (visuals). Moving obstacles are defined by a formula of
-// the round clock so both sides stay in sync without streaming every transform;
-// only the round clock (and Hex Fall tile state) is synced.
-import { ARENA } from "./arena";
+// Minigame map layouts shared by the authoritative server (colliders + physics)
+// and the client (prop visuals). Moving obstacles (sweeper beams) are a function
+// of the synced round clock, so client visuals and server hits stay aligned.
 
-// --- Obstacle Race -------------------------------------------------------------
-
-export interface HammerDef {
-  /** Pivot position. */
+export interface Vec3 {
   x: number;
+  y: number;
   z: number;
-  armLength: number;
-  /** Angular speed (rad/s). */
+}
+
+/** A static box element: a floor slab, platform, or wall. Center + full size. */
+export interface MapBox {
+  type: "floor" | "platform" | "wall";
+  cx: number;
+  cy: number;
+  cz: number;
+  w: number;
+  h: number;
+  d: number;
+}
+
+/** A horizontal beam rotating around a pivot at height y, sweeping the floor. */
+export interface MapSweeper {
+  cx: number;
+  cz: number;
+  y: number;
+  reach: number;
+  thickness: number;
+  /** rad/s. */
   speed: number;
   phase: number;
 }
 
-export interface SawDef {
-  z: number;
-  x0: number;
-  x1: number;
-  speed: number;
-  phase: number;
-  radius: number;
-}
-
-export interface ConveyorDef {
+/** A bounce pad: stepping near it launches the player upward. */
+export interface MapSpring {
   x: number;
   z: number;
-  width: number;
-  depth: number;
-  dirX: number;
-  dirZ: number;
-  force: number;
+  y: number;
+  power: number;
+  r: number;
 }
 
-export const RACE = {
-  startZ: -ARENA.platformHalf + 2,
-  finishZ: ARENA.platformHalf - 2,
-  hammerHeadRadius: 0.85,
-  hammerKnock: 15,
-  sawKnock: 17,
-  hammers: [
-    { x: -3.5, z: -3, armLength: 3, speed: 1.7, phase: 0 },
-    { x: 3.5, z: 1, armLength: 3, speed: -1.7, phase: Math.PI },
-  ] as HammerDef[],
-  saws: [{ z: 5.5, x0: -8, x1: 8, speed: 1.3, phase: 0, radius: 1.1 }] as SawDef[],
-  conveyors: [
-    { x: 0, z: -1, width: 7, depth: 3, dirX: 0, dirZ: -1, force: 4.5 },
-  ] as ConveyorDef[],
-};
-
-/** Hammer head world position at round time t. */
-export function hammerHead(h: HammerDef, t: number): { x: number; z: number } {
-  const a = h.phase + t * h.speed;
-  return { x: h.x + Math.cos(a) * h.armLength, z: h.z + Math.sin(a) * h.armLength };
+/** Decorative or marker prop (finish gate, crown, flags). */
+export interface MapDeco {
+  prop: string;
+  x: number;
+  y: number;
+  z: number;
+  rot: number;
+  scale: number;
 }
 
-/** Sawblade world position at round time t. */
-export function sawPos(s: SawDef, t: number): { x: number; z: number } {
-  const u = (Math.sin(s.phase + t * s.speed) + 1) / 2;
-  return { x: s.x0 + (s.x1 - s.x0) * u, z: s.z };
+export interface GameMap {
+  boxes: MapBox[];
+  sweepers: MapSweeper[];
+  springs: MapSpring[];
+  decos: MapDeco[];
+  spawns: Vec3[];
+  /** z lines a racer passes to bank a checkpoint (respawn point). */
+  checkpoints: number[];
+  /** Race finish line z (null for non-race maps). */
+  finishZ: number | null;
+  /** Crown trigger for Crown Grab (null otherwise). */
+  crown: Vec3 | null;
+  killY: number;
 }
 
-// --- Hex Fall ------------------------------------------------------------------
+// --- Sweeper geometry (shared by server collision and client rendering) -----
+
+export function sweeperEndpoints(s: MapSweeper, t: number): [number, number, number, number] {
+  const a = s.phase + t * s.speed;
+  const dx = Math.cos(a) * s.reach;
+  const dz = Math.sin(a) * s.reach;
+  return [s.cx - dx, s.cz - dz, s.cx + dx, s.cz + dz];
+}
+
+export function sweeperAngle(s: MapSweeper, t: number): number {
+  return s.phase + t * s.speed;
+}
+
+/** Closest distance from (px,pz) to the rotating beam, with radial knockback dir. */
+export function sweeperHit(
+  s: MapSweeper,
+  t: number,
+  px: number,
+  pz: number,
+  pad: number,
+): { hit: boolean; nx: number; nz: number } {
+  const [ax, az, bx, bz] = sweeperEndpoints(s, t);
+  const vx = bx - ax;
+  const vz = bz - az;
+  const len2 = vx * vx + vz * vz || 1;
+  let u = ((px - ax) * vx + (pz - az) * vz) / len2;
+  u = Math.max(0, Math.min(1, u));
+  const cxp = ax + vx * u;
+  const czp = az + vz * u;
+  const dist = Math.hypot(px - cxp, pz - czp);
+  if (dist > s.thickness / 2 + pad) return { hit: false, nx: 0, nz: 0 };
+  // Knock outward from the pivot.
+  const ox = px - s.cx;
+  const oz = pz - s.cz;
+  const ol = Math.hypot(ox, oz) || 1;
+  return { hit: true, nx: ox / ol, nz: oz / ol };
+}
+
+// --- Maps -------------------------------------------------------------------
+
+const SPAWN_Y = 2;
+
+/** Obstacle race down a beam-swept lane to a finish gate. */
+export function beamRunMap(): GameMap {
+  const laneW = 9;
+  return {
+    boxes: [{ type: "floor", cx: 0, cy: -0.25, cz: 2, w: laneW, h: 0.5, d: 48 }],
+    sweepers: [
+      { cx: 0, cz: -12, y: 0.9, reach: 4.6, thickness: 0.7, speed: 1.7, phase: 0 },
+      { cx: 0, cz: 0, y: 0.9, reach: 4.6, thickness: 0.7, speed: -2.0, phase: 1.2 },
+      { cx: 0, cz: 12, y: 0.9, reach: 4.6, thickness: 0.7, speed: 2.2, phase: 2.4 },
+    ],
+    springs: [
+      { x: -2.5, z: -6, y: 0, power: 12, r: 1.1 },
+      { x: 2.5, z: 7, y: 0, power: 12, r: 1.1 },
+    ],
+    decos: [
+      { prop: "signage_finish_wide", x: 0, y: 0, z: 22, rot: 0, scale: 1 },
+      { prop: "flag", x: -5, y: 0, z: 22, rot: 0, scale: 1 },
+      { prop: "flag", x: 5, y: 0, z: 22, rot: 0, scale: 1 },
+    ],
+    spawns: [
+      { x: -3, y: SPAWN_Y, z: -19 },
+      { x: -1, y: SPAWN_Y, z: -19 },
+      { x: 1, y: SPAWN_Y, z: -19 },
+      { x: 3, y: SPAWN_Y, z: -19 },
+    ],
+    checkpoints: [-19, -6, 6],
+    finishZ: 21,
+    crown: null,
+    killY: -8,
+  };
+}
+
+/** Short gauntlet to a pedestal crown; first to touch it wins. */
+export function crownGrabMap(): GameMap {
+  return {
+    boxes: [
+      { type: "floor", cx: 0, cy: -0.25, cz: 5, w: 8, h: 0.5, d: 26 },
+      { type: "platform", cx: 0, cy: 0.5, cz: 15, w: 4, h: 1.5, d: 4 },
+    ],
+    sweepers: [{ cx: 0, cz: 4, y: 0.9, reach: 4.2, thickness: 0.8, speed: 2.3, phase: 0 }],
+    springs: [],
+    decos: [{ prop: "crown", x: 0, y: 1.7, z: 15, rot: 0, scale: 1.6 }],
+    spawns: [
+      { x: -3, y: SPAWN_Y, z: -5 },
+      { x: -1, y: SPAWN_Y, z: -5 },
+      { x: 1, y: SPAWN_Y, z: -5 },
+      { x: 3, y: SPAWN_Y, z: -5 },
+    ],
+    checkpoints: [],
+    finishZ: null,
+    crown: { x: 0, y: 1.7, z: 15 },
+    killY: -8,
+  };
+}
+
+// --- Sinking Island tiles ----------------------------------------------------
+
+export const ISLAND = { cols: 7, rows: 7, tile: 2.0, thickness: 0.5 };
+
+export interface IslandTile {
+  x: number;
+  z: number;
+  ring: number;
+}
+
+/** Grid of floor tiles, each tagged with its ring (0 = center, larger = outer). */
+export function islandTiles(): IslandTile[] {
+  const out: IslandTile[] = [];
+  const midC = (ISLAND.cols - 1) / 2;
+  const midR = (ISLAND.rows - 1) / 2;
+  for (let r = 0; r < ISLAND.rows; r++) {
+    for (let c = 0; c < ISLAND.cols; c++) {
+      out.push({
+        x: (c - midC) * ISLAND.tile,
+        z: (r - midR) * ISLAND.tile,
+        ring: Math.max(Math.abs(c - midC), Math.abs(r - midR)),
+      });
+    }
+  }
+  return out;
+}
+
+export const ISLAND_MAX_RING = Math.floor((Math.max(ISLAND.cols, ISLAND.rows) - 1) / 2);
+
+// --- Hex Fall (unchanged tile mechanic) -------------------------------------
 
 export const HEX = {
   cols: 7,
@@ -71,11 +199,9 @@ export const HEX = {
   spacing: 2.15,
   tileRadius: 1.05,
   tileHeight: 0.4,
-  /** Seconds a tile survives after a player steps on it. */
   removeDelay: 0.7,
 };
 
-/** Deterministic honeycomb tile centers (offset rows), centered on the arena. */
 export function hexTilePositions(): { x: number; z: number }[] {
   const out: { x: number; z: number }[] = [];
   const dx = HEX.spacing;

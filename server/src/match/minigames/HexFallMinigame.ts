@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { ARENA, HEX, hexTilePositions } from "@party-royale/shared";
-import type { IMinigame, MinigameContext } from "../IMinigame";
+import type { IMinigame, MinigameContext, MinigameType } from "../IMinigame";
 
 /**
  * Hex Fall (Hex-A-Gone style): the solid floor is replaced by a grid of tiles.
@@ -11,6 +11,7 @@ import type { IMinigame, MinigameContext } from "../IMinigame";
 export class HexFallMinigame implements IMinigame {
   readonly id = "hexfall";
   readonly name = "Hex Fall";
+  readonly type: MinigameType = "survival";
   readonly maxDuration = 50;
 
   private readonly positions = hexTilePositions();

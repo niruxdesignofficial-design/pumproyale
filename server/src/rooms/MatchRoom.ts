@@ -15,7 +15,7 @@ import {
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { PlayerSim } from "../physics/PlayerSim";
 import { BotController } from "../ai/BotController";
-import { createMinigame } from "../match/MinigameRegistry";
+import { buildRoundPlan } from "../match/MinigameRegistry";
 import type { IMinigame, MinigameContext } from "../match/IMinigame";
 import { recordMatchResult, type Participant } from "../services/leaderboard";
 import { MatchState, PlayerState } from "./schema";
@@ -59,6 +59,7 @@ export class MatchRoom extends Room<MatchState> {
   private roundElapsed = 0;
   private matchClock = 0;
   private minigame: IMinigame | null = null;
+  private roundPlan: IMinigame[] = [];
 
   override async onCreate(): Promise<void> {
     this.state = new MatchState();
@@ -218,6 +219,7 @@ export class MatchRoom extends Room<MatchState> {
     this.autoDispose = false;
     this.matchClock = 0;
     while (this.sims.size < MAX_PLAYERS) this.addBot();
+    this.roundPlan = buildRoundPlan(this.sims.size);
     this.state.phase = "countdown";
     this.phaseTimer = COUNTDOWN;
     this.state.alive = this.sims.size;
@@ -226,7 +228,8 @@ export class MatchRoom extends Room<MatchState> {
 
   private startRound(): void {
     this.minigame?.teardown(this.ctx);
-    this.minigame = createMinigame(this.roundIndex);
+    const idx = Math.min(this.roundIndex, this.roundPlan.length - 1);
+    this.minigame = this.roundPlan[idx]!;
     this.roundElapsed = 0;
     this.state.roundClock = 0;
     // Eliminate one player per round so the match ladders down to a single winner.

@@ -1,25 +1,44 @@
-import type { IMinigame } from "./IMinigame";
-import { ObstacleRaceMinigame } from "./minigames/ObstacleRaceMinigame";
+import type { IMinigame, MinigameType } from "./IMinigame";
+import { BeamRunMinigame } from "./minigames/BeamRunMinigame";
 import { HexFallMinigame } from "./minigames/HexFallMinigame";
-import { SurvivalMinigame } from "./minigames/SurvivalMinigame";
+import { SinkingIslandMinigame } from "./minigames/SinkingIslandMinigame";
+import { CrownGrabMinigame } from "./minigames/CrownGrabMinigame";
 
-/**
- * Registry of available minigames, in round rotation order. A match plays them
- * in sequence (race, then hex, then survival as the decider), wrapping around if
- * more rounds are needed. Adding a minigame is a single line here.
- */
-const FACTORIES: Array<() => IMinigame> = [
-  () => new ObstacleRaceMinigame(),
-  () => new HexFallMinigame(),
-  () => new SurvivalMinigame(),
-];
+type Factory = () => IMinigame;
 
-export function minigameCount(): number {
-  return FACTORIES.length;
+/** Minigames grouped by round type, so the director can pick appropriate rounds. */
+const POOLS: Record<MinigameType, Factory[]> = {
+  qualify: [() => new BeamRunMinigame()],
+  survival: [() => new HexFallMinigame(), () => new SinkingIslandMinigame()],
+  final: [() => new CrownGrabMinigame()],
+};
+
+function pick(type: MinigameType): IMinigame {
+  const pool = POOLS[type];
+  const factory = pool[Math.floor(Math.random() * pool.length)]!;
+  return factory();
 }
 
-/** Create the minigame for a given round index (wraps around the rotation). */
-export function createMinigame(roundIndex: number): IMinigame {
-  const factory = FACTORIES[roundIndex % FACTORIES.length]!;
-  return factory();
+/**
+ * Build the round sequence for a match: a qualify round, then survival rounds,
+ * then a final, sized to the number of players so it ladders down to one winner.
+ * Avoids repeating the same minigame within a match where possible.
+ */
+export function buildRoundPlan(playerCount: number): IMinigame[] {
+  const plan: IMinigame[] = [];
+  const used = new Set<string>();
+
+  const add = (type: MinigameType) => {
+    let g = pick(type);
+    // Try to avoid repeats within the match.
+    for (let i = 0; i < 3 && used.has(g.id); i++) g = pick(type);
+    used.add(g.id);
+    plan.push(g);
+  };
+
+  // One elimination per round; reserve the last as a final.
+  const rounds = Math.max(1, playerCount - 1);
+  for (let i = 0; i < rounds - 1; i++) add(i === 0 ? "qualify" : "survival");
+  add("final");
+  return plan;
 }
