@@ -88,6 +88,8 @@ export class MatchState extends Schema {
   roundClock = 0;
   /** Dynamic objects for the active minigame (ball / targets / gems). */
   entities = new ArraySchema<EntityState>();
+  /** Crumbling-floor tile liveness (true = present). Empty outside that round. */
+  tiles = new ArraySchema<boolean>();
   winnerId = "";
   winnerName = "";
 }
@@ -102,6 +104,7 @@ defineTypes(MatchState, {
   alive: "number",
   roundClock: "number",
   entities: [EntityState],
+  tiles: ["boolean"],
   winnerId: "string",
   winnerName: "string",
 });

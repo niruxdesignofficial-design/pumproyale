@@ -1,7 +1,17 @@
 import type RAPIER from "@dimforge/rapier3d-compat";
-import { CLIMB_FINISH_Y, CLIMB_STEPS, climbMap, type MinigameMap } from "@party-royale/shared";
+import {
+  CLIMB_FINISH_Y,
+  CLIMB_STEPS,
+  PHYS,
+  climbMap,
+  sweeperHit,
+  type MinigameMap,
+} from "@party-royale/shared";
 import type { IMinigame, MinigameContext } from "../IMinigame";
 import { buildMapColliders, removeColliders } from "../mapColliders";
+
+const SWEEP_KNOCK = 8;
+const SPIKE_KNOCK = 10;
 
 interface Climber {
   maxY: number;
@@ -19,7 +29,7 @@ const FINISH_BASE = 1000;
 export class ClimbMinigame implements IMinigame {
   readonly id = "climb";
   readonly name = "Tower Climb";
-  readonly maxDuration = 55;
+  readonly maxDuration = 70;
 
   private map: MinigameMap = climbMap();
   private colliders: RAPIER.Collider[] = [];
@@ -57,6 +67,33 @@ export class ClimbMinigame implements IMinigame {
       // Bank a checkpoint when standing on a step.
       const step = stepUnder(p.x, p.y, p.z);
       if (step) c.checkpoint = { x: p.x, y: step.y + 0.8, z: p.z };
+
+      // Rotating sweeper bars: jumping above the bar clears it.
+      if (sim.bumperCooldown <= 0) {
+        for (const s of this.map.sweepers ?? []) {
+          if (p.y > s.y + s.thickness / 2 + 0.5) continue;
+          const hit = sweeperHit(s, this.elapsed, p.x, p.z, PHYS.capsuleRadius);
+          if (hit.hit) {
+            sim.applyKnockback(hit.nx, hit.nz, SWEEP_KNOCK);
+            break;
+          }
+        }
+      }
+
+      // Spike-roller proximity hazards.
+      if (sim.bumperCooldown <= 0) {
+        for (const h of this.map.hazards ?? []) {
+          if (Math.abs(p.y - h.y) > 1.5) continue;
+          const dx = p.x - h.x;
+          const dz = p.z - h.z;
+          const d = Math.hypot(dx, dz);
+          if (d <= h.radius + PHYS.capsuleRadius) {
+            const inv = d > 1e-4 ? 1 / d : 0;
+            sim.applyKnockback(inv === 0 ? 1 : dx * inv, inv === 0 ? 0 : dz * inv, SPIKE_KNOCK);
+            break;
+          }
+        }
+      }
 
       if (p.y < this.map.killY) {
         sim.respawn(c.checkpoint);

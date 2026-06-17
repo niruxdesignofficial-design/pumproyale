@@ -38,6 +38,8 @@ export class PlayerSim {
   private diving = false;
   private diveTimer = 0;
   private knockLock = 0;
+  /** Seconds remaining of the one-shot "shoot/throw" animation. */
+  private shootTimer = 0;
   bumperCooldown = 0;
 
   private faceX = 0;
@@ -84,6 +86,7 @@ export class PlayerSim {
 
     if (this.knockLock > 0) this.knockLock -= dt;
     if (this.bumperCooldown > 0) this.bumperCooldown -= dt;
+    if (this.shootTimer > 0) this.shootTimer -= dt;
     if (this.diving) {
       this.diveTimer -= dt;
       if (this.diveTimer <= 0) this.diving = false;
@@ -178,6 +181,19 @@ export class PlayerSim {
     this.spawn = spawn;
   }
 
+  /** Point the player in a direction (e.g. toward the targets at round start). */
+  setFacing(x: number, z: number): void {
+    const len = Math.hypot(x, z) || 1;
+    this.faceX = x / len;
+    this.faceZ = z / len;
+    this.yaw = Math.atan2(this.faceX, this.faceZ);
+  }
+
+  /** Play the one-shot shoot/throw animation for a short window. */
+  triggerShoot(): void {
+    this.shootTimer = 0.4;
+  }
+
   /** Launch upward (spring pad). */
   bounce(power: number): void {
     const v = this.body.linvel();
@@ -190,6 +206,7 @@ export class PlayerSim {
 
   animState(): AnimationState {
     if (this.diving) return "dive";
+    if (this.shootTimer > 0) return "shoot";
     const v = this.body.linvel();
     if (!this.grounded) return v.y > 0.5 ? "jump" : "fall";
     return Math.hypot(v.x, v.z) > 0.6 ? "run" : "idle";

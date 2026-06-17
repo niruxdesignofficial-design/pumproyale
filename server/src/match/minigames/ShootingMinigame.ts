@@ -52,7 +52,10 @@ export class ShootingMinigame implements IMinigame {
 
     this.map.spawns.forEach((s, i) => {
       const id = ctx.players()[i];
-      if (id) ctx.sims.get(id)?.respawn(s);
+      if (!id) return;
+      const sim = ctx.sims.get(id);
+      sim?.respawn(s);
+      sim?.setFacing(0, 1); // face the targets (far +z side) by default
     });
   }
 
@@ -90,6 +93,7 @@ export class ShootingMinigame implements IMinigame {
   private resolveShot(ctx: MinigameContext, id: string): void {
     const sim = ctx.sims.get(id);
     if (!sim) return;
+    sim.triggerShoot();
     const p = sim.position;
     const f = ctx.facing(id);
     let best: Target | null = null;

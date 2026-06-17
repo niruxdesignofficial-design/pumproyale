@@ -1,5 +1,15 @@
 import * as THREE from "three";
-import { GEMS, footballMap, shootingMap, climbMap, gemsMap } from "@party-royale/shared";
+import {
+  CRUMBLE,
+  GEMS,
+  type MapSweeper,
+  crumbleTiles,
+  footballMap,
+  shootingMap,
+  climbMap,
+  gemsMap,
+  sweeperAngle,
+} from "@party-royale/shared";
 import { buildMapView } from "./MapBuilder";
 import { makeProp } from "./VarietyProps";
 
@@ -17,15 +27,19 @@ interface NetEntity {
 }
 
 /**
- * Renders the active minigame's static map (built from Variety props) plus its
- * dynamic entities (soccer ball, shooting targets, gems) at server-authoritative
- * positions. Hides the lobby floor while a minigame is shown.
+ * Renders the active minigame's static map (Variety props) plus its dynamic
+ * layers: rotating sweeper bars (climb), the crumbling tile floor (gem round),
+ * and the synced entities (ball / targets / gems). Hides the lobby floor while a
+ * minigame is shown.
  */
 export class MinigameViews {
   private container = new THREE.Group();
   private active: Active = "none";
   private entityMeshes: (THREE.Object3D | null)[] = [];
   private entityKeys: string[] = [];
+  private swipers: { mesh: THREE.Object3D; def: MapSweeper }[] = [];
+  private tileMeshes: (THREE.Object3D | null)[] = [];
+  private falling: boolean[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -45,6 +59,9 @@ export class MinigameViews {
     this.container = new THREE.Group();
     this.entityMeshes = [];
     this.entityKeys = [];
+    this.swipers = [];
+    this.tileMeshes = [];
+    this.falling = [];
 
     const lobby = next === "none";
     this.platform.visible = lobby;
@@ -60,13 +77,48 @@ export class MinigameViews {
             : next === "gems"
               ? gemsMap()
               : null;
-    if (map) this.container.add(buildMapView(map));
+    if (map) {
+      this.container.add(buildMapView(map));
+      for (const s of map.sweepers ?? []) {
+        const mesh = makeProp(s.model, s.reach * 2, "center");
+        if (!mesh) continue;
+        mesh.position.set(s.cx, s.y, s.cz);
+        this.container.add(mesh);
+        this.swipers.push({ mesh, def: s });
+      }
+    }
+    if (next === "gems") this.buildCrumble();
 
     this.scene.add(this.container);
   }
 
-  update(dt: number, _roundClock: number, entities: ArrayLike<NetEntity> | undefined): void {
-    if (this.active === "none" || !entities) return;
+  update(
+    dt: number,
+    roundClock: number,
+    entities: ArrayLike<NetEntity> | undefined,
+    tiles: ArrayLike<boolean> | undefined,
+  ): void {
+    if (this.active === "none") return;
+
+    // Rotating sweeper bars track the synced round clock.
+    for (const sw of this.swipers) sw.mesh.rotation.y = -sweeperAngle(sw.def, roundClock);
+
+    // Crumbling floor: tiles that flipped to dead fall away (telegraphed).
+    if (this.active === "gems" && tiles) {
+      for (let i = 0; i < this.tileMeshes.length; i++) {
+        const mesh = this.tileMeshes[i];
+        if (!mesh) continue;
+        const alive = i < tiles.length ? Boolean(tiles[i]) : true;
+        if (!alive && !this.falling[i] && mesh.visible) this.falling[i] = true;
+        if (this.falling[i]) {
+          mesh.position.y -= dt * 9;
+          mesh.rotation.x += dt * 1.6;
+          if (mesh.position.y < -12) mesh.visible = false;
+        }
+      }
+    }
+
+    if (!entities) return;
     for (let i = 0; i < entities.length; i++) {
       const e = entities[i];
       if (!e) continue;
@@ -85,11 +137,26 @@ export class MinigameViews {
       const mesh = this.entityMeshes[i];
       if (!mesh) continue;
       mesh.visible = e.active;
-      // Targets stand on the floor; ball/gems use their authoritative height.
       mesh.position.set(e.x, e.kind === "target" ? 0 : e.y, e.z);
       if (e.kind === "gem") mesh.rotation.y += dt * 1.8;
       else if (e.kind === "ball") mesh.rotation.y += dt * 1.2;
     }
+  }
+
+  private buildCrumble(): void {
+    crumbleTiles().forEach((p, i) => {
+      const col = i % CRUMBLE.cols;
+      const row = Math.floor(i / CRUMBLE.cols);
+      const model = CRUMBLE.models[(col + row) % CRUMBLE.models.length]!;
+      const mesh = makeProp(model, CRUMBLE.tileSize, "top");
+      if (!mesh) {
+        this.tileMeshes[i] = null;
+        return;
+      }
+      mesh.position.set(p.x, 0, p.z);
+      this.tileMeshes[i] = mesh;
+      this.container.add(mesh);
+    });
   }
 }
 

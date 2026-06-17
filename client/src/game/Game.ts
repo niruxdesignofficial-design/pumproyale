@@ -38,6 +38,7 @@ interface MatchStateView {
   minigame: string;
   roundClock: number;
   entities: ArrayLike<NetEntity>;
+  tiles: ArrayLike<boolean>;
 }
 
 /** Minimal shape of a synced player, for reading authoritative state. */
@@ -74,6 +75,7 @@ export class Game {
   private readonly minigameViews: MinigameViews;
 
   private readonly avatars = new Map<string, Avatar>();
+  private readonly tracers: { mesh: THREE.Mesh; ttl: number }[] = [];
   private localId: string | null = null;
   private cameraSnapped = false;
   private standingsSig = "";
@@ -140,6 +142,12 @@ export class Game {
     this.input.detach();
     window.removeEventListener("keydown", this.enableSound);
     void this.net.dispose();
+    for (const t of this.tracers) {
+      this.scene.remove(t.mesh);
+      t.mesh.geometry.dispose();
+      (t.mesh.material as THREE.Material).dispose();
+    }
+    this.tracers.length = 0;
     for (const avatar of this.avatars.values()) avatar.dispose();
     this.avatars.clear();
     this.cameraRig.dispose();
@@ -163,9 +171,16 @@ export class Game {
         this.cameraSnapped = true;
       }
 
+      let lastAnim = player.anim;
       $(player).onChange(() => {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
-        avatar.setAnim(asAnim(player.anim));
+        const anim = asAnim(player.anim);
+        // Cosmetic shot tracer when a player starts the shoot animation.
+        if (anim === "shoot" && lastAnim !== "shoot") {
+          this.spawnTracer(avatar.position, player.yaw);
+        }
+        lastAnim = player.anim;
+        avatar.setAnim(anim);
         if (sessionId === this.localId) {
           gameStore.set({ localPlacement: player.placement });
         }
@@ -214,9 +229,16 @@ export class Game {
     if (st) {
       const showMap = st.phase === "playing" || st.phase === "intro";
       this.minigameViews.setMinigame(showMap && typeof st.minigame === "string" ? st.minigame : "");
-      this.minigameViews.update(dt, typeof st.roundClock === "number" ? st.roundClock : 0, st.entities);
+      this.minigameViews.update(
+        dt,
+        typeof st.roundClock === "number" ? st.roundClock : 0,
+        st.entities,
+        st.tiles,
+      );
       this.publishStandings();
     }
+
+    this.updateTracers(dt);
 
     const local = this.localId ? this.avatars.get(this.localId) : undefined;
     if (local) {
@@ -260,6 +282,33 @@ export class Game {
     gameStore.set({ standings: list });
   }
 
+  /** Spawn a short cosmetic shot tracer from a shooter along their facing yaw. */
+  private spawnTracer(from: THREE.Vector3, yaw: number): void {
+    const len = 9;
+    const geo = new THREE.BoxGeometry(0.07, 0.07, len);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffe07a, transparent: true, opacity: 0.9 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(from.x + Math.sin(yaw) * (len / 2), from.y + 1.0, from.z + Math.cos(yaw) * (len / 2));
+    mesh.rotation.y = yaw;
+    this.scene.add(mesh);
+    this.tracers.push({ mesh, ttl: 0.12 });
+  }
+
+  private updateTracers(dt: number): void {
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const t = this.tracers[i]!;
+      t.ttl -= dt;
+      const mat = t.mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.max(0, t.ttl / 0.12) * 0.9;
+      if (t.ttl <= 0) {
+        this.scene.remove(t.mesh);
+        t.mesh.geometry.dispose();
+        mat.dispose();
+        this.tracers.splice(i, 1);
+      }
+    }
+  }
+
   private sampleInput(): InputIntent {
     const f = (this.input.isActive("forward") ? 1 : 0) - (this.input.isActive("back") ? 1 : 0);
     const r = (this.input.isActive("right") ? 1 : 0) - (this.input.isActive("left") ? 1 : 0);
@@ -298,7 +347,7 @@ export class Game {
   }
 }
 
-const ANIM_STATES = new Set(["idle", "run", "jump", "fall", "dive", "hit", "win", "lose"]);
+const ANIM_STATES = new Set(["idle", "run", "jump", "fall", "dive", "hit", "win", "lose", "shoot"]);
 function asAnim(value: string): AnimationState {
   return (ANIM_STATES.has(value) ? value : "idle") as AnimationState;
 }

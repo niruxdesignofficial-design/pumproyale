@@ -4,10 +4,10 @@ import type { GameState, Standing } from "../game/store";
 
 /** Short objective + control hint per minigame. */
 function objective(minigame: string): string {
-  if (/soccer|football/i.test(minigame)) return "Kick the ball into a goal — E / click";
-  if (/target|range|shoot/i.test(minigame)) return "Shoot the targets — E / click";
-  if (/climb|tower/i.test(minigame)) return "Jump up to the flag at the top";
-  if (/gem/i.test(minigame)) return "Grab as many gems as you can";
+  if (/soccer|football/i.test(minigame)) return "Kick the ball into another player's goal — E / click";
+  if (/target|range|shoot/i.test(minigame)) return "Shoot the targets across the barrier — E / click";
+  if (/climb|tower/i.test(minigame)) return "Climb to the flag — dodge the spinning bars";
+  if (/gem/i.test(minigame)) return "Grab gems — the floor is falling!";
   return "";
 }
 

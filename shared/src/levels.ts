@@ -44,9 +44,11 @@ export interface MapCollider {
   yaw?: number;
 }
 
-/** A soccer goal trigger zone; the ball entering scores for the last toucher. */
+/** A soccer goal trigger zone owned by one player (by spawn index). */
 export interface GoalZone {
-  /** Owning team color index (visual). */
+  /** Index of the owning player (0-3): scoring here does NOT count for them. */
+  owner: number;
+  /** Team color index used to tint the goal's flag marker. */
   team: number;
   x: number;
   y: number;
@@ -54,6 +56,30 @@ export interface GoalZone {
   hx: number;
   hy: number;
   hz: number;
+}
+
+/** A horizontal beam rotating around a pivot at height y, sweeping the floor. */
+export interface MapSweeper {
+  cx: number;
+  cz: number;
+  y: number;
+  reach: number;
+  thickness: number;
+  /** rad/s. */
+  speed: number;
+  phase: number;
+  /** Variety prop used to render the bar (a swiper). */
+  model: string;
+}
+
+/** A stationary proximity hazard (spike roller) that knocks players back. */
+export interface MapHazard {
+  x: number;
+  z: number;
+  y: number;
+  radius: number;
+  model: string;
+  yaw?: number;
 }
 
 export interface MinigameMap {
@@ -64,9 +90,51 @@ export interface MinigameMap {
   /** Below this Y a player has fallen off and is respawned (never eliminated). */
   killY: number;
   goals?: GoalZone[];
+  /** Rotating bars (climb hazards), simulated from the synced round clock. */
+  sweepers?: MapSweeper[];
+  /** Stationary proximity hazards (spike rollers). */
+  hazards?: MapHazard[];
 }
 
 const SPAWN_Y = 2;
+
+// --- Sweeper geometry (shared by server collision and client rendering) -----
+
+export function sweeperEndpoints(s: MapSweeper, t: number): [number, number, number, number] {
+  const a = s.phase + t * s.speed;
+  const dx = Math.cos(a) * s.reach;
+  const dz = Math.sin(a) * s.reach;
+  return [s.cx - dx, s.cz - dz, s.cx + dx, s.cz + dz];
+}
+
+export function sweeperAngle(s: MapSweeper, t: number): number {
+  return s.phase + t * s.speed;
+}
+
+/** Closest distance from (px,pz) to the rotating beam, with radial knockback dir. */
+export function sweeperHit(
+  s: MapSweeper,
+  t: number,
+  px: number,
+  pz: number,
+  pad: number,
+): { hit: boolean; nx: number; nz: number } {
+  const [ax, az, bx, bz] = sweeperEndpoints(s, t);
+  const vx = bx - ax;
+  const vz = bz - az;
+  const len2 = vx * vx + vz * vz || 1;
+  let u = ((px - ax) * vx + (pz - az) * vz) / len2;
+  u = Math.max(0, Math.min(1, u));
+  const cxp = ax + vx * u;
+  const czp = az + vz * u;
+  const dist = Math.hypot(px - cxp, pz - czp);
+  if (dist > s.thickness / 2 + pad) return { hit: false, nx: 0, nz: 0 };
+  // Knock outward from the pivot.
+  const ox = px - s.cx;
+  const oz = pz - s.cz;
+  const ol = Math.hypot(ox, oz) || 1;
+  return { hit: true, nx: ox / ol, nz: oz / ol };
+}
 
 // --- shared builders --------------------------------------------------------
 
@@ -135,41 +203,48 @@ function wall(
 
 // --- Soccer -----------------------------------------------------------------
 
-/** Soccer pitch: two wide goals, a dynamic ball, low side/back walls. Score by
- * pushing/kicking the ball into either goal (counts for the last toucher). */
+/**
+ * 4-way soccer pitch: a square arena with one goal per player on each edge, a
+ * dynamic ball, and a TALL invisible perimeter wall (only the goal mouths are
+ * open) so the ball can never leave. Each goal is owned by the player who spawns
+ * in front of it; scoring in another player's goal scores for the scorer (own
+ * goal = nothing). Owner index == goal index == spawn index.
+ */
 export function footballMap(): MinigameMap {
-  const HALF_X = 8;
-  const HALF_Z = 12;
+  const HALF = 10;
   const GOAL_HALF = 3;
-  const props: MapProp[] = [];
-  const colliders: MapCollider[] = [floorCollider(HALF_X, HALF_Z)];
+  const WALL_H = 3; // tall (mostly invisible above the low barrier props)
+  const props: MapProp[] = floorTiles("tileLarge_forest", 5, 5, 4);
+  const colliders: MapCollider[] = [floorCollider(HALF, HALF)];
 
-  // Two-tone pitch (blue half / red half).
+  // Goals: south(0), north(1), west(2), east(3), each opening into the pitch.
   props.push(
-    ...floorTiles(
-      (_c, r) => (r < 3 ? "tileLarge_teamBlue" : "tileLarge_teamRed"),
-      4,
-      6,
-      4,
-    ),
+    { model: "gateLargeWide_teamBlue", x: 0, y: 0, z: -HALF, yaw: 0, size: 7 },
+    { model: "gateLargeWide_teamRed", x: 0, y: 0, z: HALF, yaw: Math.PI, size: 7 },
+    { model: "gateLargeWide_teamYellow", x: -HALF, y: 0, z: 0, yaw: Math.PI / 2, size: 7 },
+    { model: "gateLargeWide_teamBlue", x: HALF, y: 0, z: 0, yaw: -Math.PI / 2, size: 7 },
   );
 
-  // Goals at each end, facing inward.
-  props.push({ model: "gateLargeWide_teamBlue", x: 0, y: 0, z: -HALF_Z, yaw: 0, size: 7 });
-  props.push({ model: "gateLargeWide_teamRed", x: 0, y: 0, z: HALF_Z, yaw: Math.PI, size: 7 });
-
-  // Side walls (full length).
-  const left = wall("x", -HALF_X - 0.4, -HALF_Z, HALF_Z, 1.2, "barrierLarge");
-  const right = wall("x", HALF_X + 0.4, -HALF_Z, HALF_Z, 1.2, "barrierLarge");
-  props.push(...left.props, ...right.props);
-  colliders.push(...left.colliders, ...right.colliders);
-
-  // Back walls either side of each goal mouth.
-  for (const z of [-HALF_Z - 0.4, HALF_Z + 0.4]) {
-    const a = wall("z", z, -HALF_X, -GOAL_HALF, 1.2, "barrierLarge");
-    const b = wall("z", z, GOAL_HALF, HALF_X, 1.2, "barrierLarge");
-    props.push(...a.props, ...b.props);
-    colliders.push(...a.colliders, ...b.colliders);
+  // Tall invisible perimeter: each edge has two wall segments flanking its goal mouth.
+  for (const z of [-HALF - 0.4, HALF + 0.4]) {
+    for (const seg of [
+      [-HALF, -GOAL_HALF],
+      [GOAL_HALF, HALF],
+    ] as const) {
+      const w = wall("z", z, seg[0], seg[1], WALL_H, "barrierLarge");
+      props.push(...w.props);
+      colliders.push(...w.colliders);
+    }
+  }
+  for (const x of [-HALF - 0.4, HALF + 0.4]) {
+    for (const seg of [
+      [-HALF, -GOAL_HALF],
+      [GOAL_HALF, HALF],
+    ] as const) {
+      const w = wall("x", x, seg[0], seg[1], WALL_H, "barrierLarge");
+      props.push(...w.props);
+      colliders.push(...w.colliders);
+    }
   }
 
   return {
@@ -177,15 +252,17 @@ export function footballMap(): MinigameMap {
     props,
     colliders,
     spawns: [
-      { x: -4, y: SPAWN_Y, z: -4 },
-      { x: 4, y: SPAWN_Y, z: -4 },
-      { x: -4, y: SPAWN_Y, z: 4 },
-      { x: 4, y: SPAWN_Y, z: 4 },
+      { x: 0, y: SPAWN_Y, z: -6 }, // owner 0 defends south goal
+      { x: 0, y: SPAWN_Y, z: 6 }, // owner 1 defends north goal
+      { x: -6, y: SPAWN_Y, z: 0 }, // owner 2 defends west goal
+      { x: 6, y: SPAWN_Y, z: 0 }, // owner 3 defends east goal
     ],
     killY: -8,
     goals: [
-      { team: 0, x: 0, y: 1.2, z: -HALF_Z - 0.9, hx: GOAL_HALF, hy: 1.6, hz: 0.9 },
-      { team: 1, x: 0, y: 1.2, z: HALF_Z + 0.9, hx: GOAL_HALF, hy: 1.6, hz: 0.9 },
+      { owner: 0, team: 0, x: 0, y: 1.2, z: -HALF - 0.9, hx: GOAL_HALF, hy: 1.6, hz: 0.9 },
+      { owner: 1, team: 1, x: 0, y: 1.2, z: HALF + 0.9, hx: GOAL_HALF, hy: 1.6, hz: 0.9 },
+      { owner: 2, team: 2, x: -HALF - 0.9, y: 1.2, z: 0, hx: 0.9, hy: 1.6, hz: GOAL_HALF },
+      { owner: 3, team: 0, x: HALF + 0.9, y: 1.2, z: 0, hx: 0.9, hy: 1.6, hz: GOAL_HALF },
     ],
   };
 }
@@ -196,33 +273,37 @@ export const SHOOTING = {
   /** Active targets at once. */
   targets: 6,
   /** Max shot range (world units). */
-  range: 16,
+  range: 22,
   /** Aim cone half-angle (radians) — forgiving for keyboard aim. */
-  cone: 0.32,
+  cone: 0.34,
   /** Seconds between shots. */
   cooldown: 0.45,
-  /** Candidate target spots (a target lives at one of these, then relocates). */
+  /** Candidate target spots (far side of the barrier; targets relocate between them). */
   spots: [
-    { x: -8, z: 5 },
-    { x: -4, z: 7 },
-    { x: 0, z: 6 },
-    { x: 4, z: 7 },
-    { x: 8, z: 5 },
-    { x: -7, z: 2 },
-    { x: 7, z: 2 },
-    { x: -3, z: 4 },
-    { x: 3, z: 4 },
-    { x: 0, z: 3 },
+    { x: -8, z: 8 },
+    { x: -4, z: 6 },
+    { x: 0, z: 9 },
+    { x: 4, z: 6 },
+    { x: 8, z: 8 },
+    { x: -7, z: 3 },
+    { x: 7, z: 3 },
+    { x: -3, z: 5 },
+    { x: 3, z: 5 },
+    { x: 0, z: 4 },
   ] as { x: number; z: number }[],
   /** Height of a target's center. */
   y: 1.3,
 } as const;
 
-/** Shooting gallery: a desert platform; shoot the targets that pop up. */
+/**
+ * Shooting gallery: a desert platform split by a barrier. Players stay in the
+ * near zone and shoot the targets that pop up on the far side (shots are aim-cone
+ * checks, so they pass over the barrier; the barrier only blocks movement).
+ */
 export function shootingMap(): MinigameMap {
   const HALF_X = 10;
-  const HALF_Z = 8;
-  const props: MapProp[] = floorTiles("tileLarge_desert", 5, 4, 4);
+  const HALF_Z = 10;
+  const props: MapProp[] = floorTiles("tileLarge_desert", 5, 5, 4);
   const colliders: MapCollider[] = [floorCollider(HALF_X, HALF_Z)];
   for (const [axis, fixed, from, to] of [
     ["x", -HALF_X - 0.4, -HALF_Z, HALF_Z],
@@ -230,25 +311,29 @@ export function shootingMap(): MinigameMap {
     ["z", -HALF_Z - 0.4, -HALF_X, HALF_X],
     ["z", HALF_Z + 0.4, -HALF_X, HALF_X],
   ] as const) {
-    const w = wall(axis, fixed, from, to, 1.0, "barrierMedium");
+    const w = wall(axis, fixed, from, to, 1.2, "barrierMedium");
     props.push(...w.props);
     colliders.push(...w.colliders);
   }
-  // Desert dressing in the corners.
+  // The dividing barrier between shooters (z < -1) and targets (z > 1).
+  const divider = wall("z", -1, -HALF_X, HALF_X, 1.1, "barrierLarge");
+  props.push(...divider.props);
+  colliders.push(...divider.colliders);
+  // Desert dressing.
   props.push(
-    { model: "rocksA_desert", x: -9, y: 0, z: -7, size: 2 },
-    { model: "tree_desert", x: 9, y: 0, z: -7, size: 3 },
-    { model: "plantA_desert", x: 9, y: 0, z: 7, size: 1.4 },
+    { model: "rocksA_desert", x: -9, y: 0, z: 9, size: 2 },
+    { model: "tree_desert", x: 9, y: 0, z: 9, size: 3 },
+    { model: "plantA_desert", x: -9, y: 0, z: -9, size: 1.4 },
   );
   return {
     id: "shooting",
     props,
     colliders,
     spawns: [
-      { x: -6, y: SPAWN_Y, z: -6 },
-      { x: -2, y: SPAWN_Y, z: -6 },
-      { x: 2, y: SPAWN_Y, z: -6 },
-      { x: 6, y: SPAWN_Y, z: -6 },
+      { x: -6, y: SPAWN_Y, z: -7 },
+      { x: -2, y: SPAWN_Y, z: -7 },
+      { x: 2, y: SPAWN_Y, z: -7 },
+      { x: 6, y: SPAWN_Y, z: -7 },
     ],
     killY: -8,
   };
@@ -265,18 +350,31 @@ export interface ClimbStep {
 }
 
 /**
- * A straight, forgiving staircase rising to a flag: aligned on x=0 so moving
- * forward (and jumping) climbs it, with gentle 1.0-high steps and ~2.8 gaps that
- * both players and bots can clear. First to the top scores most.
+ * A long, forgiving staircase rising to a flag: aligned on x=0 so moving forward
+ * (and jumping) climbs it, with gentle 1.0-high steps and ~2.8 gaps. The wider
+ * "landing" steps host rotating sweeper bars and spike-roller hazards. First to
+ * the top scores most.
  */
 export const CLIMB_STEPS: ClimbStep[] = [
-  { x: 0, y: 0, z: -9, w: 8, d: 4 }, // base
-  { x: 0, y: 1.0, z: -6, w: 6, d: 3 },
-  { x: 0, y: 2.0, z: -3.2, w: 6, d: 3 },
-  { x: 0, y: 3.0, z: -0.4, w: 6, d: 3 },
-  { x: 0, y: 4.0, z: 2.4, w: 6, d: 3 },
-  { x: 0, y: 5.0, z: 5.2, w: 6, d: 3 },
-  { x: 0, y: 6.0, z: 8.2, w: 8, d: 5 }, // summit
+  { x: 0, y: 0, z: -9, w: 8, d: 4 }, // 0 base
+  { x: 0, y: 1, z: -6.2, w: 6, d: 3 }, // 1
+  { x: 0, y: 2, z: -3.4, w: 7, d: 4 }, // 2 landing (sweeper)
+  { x: 0, y: 3, z: -0.6, w: 6, d: 3 }, // 3
+  { x: 0, y: 4, z: 2.2, w: 6, d: 3 }, // 4
+  { x: 0, y: 5, z: 5.0, w: 7, d: 4 }, // 5 landing (sweeper)
+  { x: 0, y: 6, z: 7.8, w: 6, d: 3 }, // 6
+  { x: 0, y: 7, z: 10.6, w: 6, d: 3 }, // 7
+  { x: 0, y: 8, z: 13.4, w: 7, d: 4 }, // 8 landing (sweeper + spikes)
+  { x: 0, y: 9, z: 16.2, w: 6, d: 3 }, // 9
+  { x: 0, y: 10, z: 19.0, w: 6, d: 3 }, // 10 (spikes)
+  { x: 0, y: 11, z: 21.8, w: 8, d: 5 }, // 11 summit (flag)
+];
+
+/** Indices of the wide landing steps that host rotating sweeper bars. */
+const CLIMB_LANDINGS = [
+  { i: 2, speed: 1.5, phase: 0, model: "swiperLong_teamRed" },
+  { i: 5, speed: -1.7, phase: 1.0, model: "swiperLong_teamBlue" },
+  { i: 8, speed: 1.6, phase: 2.0, model: "swiperLong_teamYellow" },
 ];
 
 /** Y a climber must reach (top of the summit step) to finish the round. */
@@ -288,7 +386,6 @@ export function climbMap(): MinigameMap {
   CLIMB_STEPS.forEach((s, i) => {
     colliders.push({ x: s.x, y: s.y - 0.5, z: s.z, hx: s.w / 2, hy: 0.5, hz: s.d / 2 });
     const model = i === CLIMB_STEPS.length - 1 ? "tileLarge_forest" : "tileLarge_teamYellow";
-    // Cover each step with one or more tiles.
     const cols = Math.max(1, Math.round(s.w / 4));
     const rows = Math.max(1, Math.round(s.d / 4));
     const tw = s.w / cols;
@@ -306,18 +403,46 @@ export function climbMap(): MinigameMap {
       }
     }
   });
+
+  // Rotating sweeper bars on the landings (rendered + collided from roundClock).
+  const sweepers: MapSweeper[] = CLIMB_LANDINGS.map((l) => {
+    const s = CLIMB_STEPS[l.i]!;
+    return {
+      cx: s.x,
+      cz: s.z,
+      y: s.y + 1.1,
+      reach: s.w / 2 - 0.2,
+      thickness: 1.0,
+      speed: l.speed,
+      phase: l.phase,
+      model: l.model,
+    };
+  });
+
+  // Spike-roller proximity hazards on two of the wider steps.
+  const hazards: MapHazard[] = [
+    { x: -1.8, y: CLIMB_STEPS[8]!.y, z: CLIMB_STEPS[8]!.z + 1.0, radius: 1.3, model: "spikeRoller" },
+    { x: 1.6, y: CLIMB_STEPS[10]!.y, z: CLIMB_STEPS[10]!.z, radius: 1.2, model: "spikeRoller" },
+  ];
+  for (const h of hazards) {
+    props.push({ model: h.model, x: h.x, y: h.y, z: h.z, size: 2.2, anchor: "top", yaw: h.yaw ?? 0 });
+  }
+
   const top = CLIMB_STEPS[CLIMB_STEPS.length - 1]!;
-  props.push({ model: "flag_teamYellow", x: top.x, y: top.y, z: top.z + 1.5, size: 2.5 });
+  props.push({ model: "flag_teamYellow", x: top.x, y: top.y, z: top.z + 1.6, size: 2.5 });
   props.push(
     { model: "tree_forest", x: -5, y: 0, z: -9, size: 3.5 },
     { model: "tree_forest", x: 5, y: 0, z: -9, size: 3 },
     { model: "rocksB_forest", x: -4, y: 0, z: -6, size: 2 },
   );
+
   const base = CLIMB_STEPS[0]!;
   return {
     id: "climb",
     props,
     colliders,
+    sweepers,
+    hazards,
     spawns: [
       { x: base.x - 2, y: base.y + SPAWN_Y, z: base.z },
       { x: base.x + 2, y: base.y + SPAWN_Y, z: base.z },
@@ -328,60 +453,94 @@ export function climbMap(): MinigameMap {
   };
 }
 
-// --- Collect gems -----------------------------------------------------------
+// --- Gems on a crumbling floor ----------------------------------------------
 
 export const GEMS = {
   /** Gems present at once. */
   count: 14,
   /** Pickup radius. */
   pickupR: 1.1,
-  /** Half-extent of the square arena gems spawn within. */
-  half: 11,
-  /** Seconds before a collected gem reappears elsewhere. */
-  respawn: 1.5,
+  /** Seconds before a collected gem reappears on another live tile. */
+  respawn: 1.3,
   /** Gem visual variants (Variety pickups). */
   variants: ["diamond_teamBlue", "heart_teamRed", "star"] as const,
 } as const;
 
+/** The crumbling-floor grid: tiles drop a beat after a player stands on them. */
+export const CRUMBLE = {
+  cols: 8,
+  rows: 8,
+  spacing: 3,
+  tileSize: 2.7,
+  thickness: 0.5,
+  /** Seconds a tile lasts after first being stepped on. */
+  removeDelay: 1.1,
+  /** Tile models (alternated like a checkerboard by the client). */
+  models: ["tileLarge_teamBlue", "tileLarge_teamRed"] as const,
+} as const;
+
+/** World positions of every crumble-floor tile (tops at y=0). */
+export function crumbleTiles(): { x: number; z: number }[] {
+  const out: { x: number; z: number }[] = [];
+  const offX = ((CRUMBLE.cols - 1) * CRUMBLE.spacing) / 2;
+  const offZ = ((CRUMBLE.rows - 1) * CRUMBLE.spacing) / 2;
+  for (let r = 0; r < CRUMBLE.rows; r++) {
+    for (let c = 0; c < CRUMBLE.cols; c++) {
+      out.push({ x: c * CRUMBLE.spacing - offX, z: r * CRUMBLE.spacing - offZ });
+    }
+  }
+  return out;
+}
+
+/** Spectator ledge (fallen players watch from here; separated by a gap). */
+export const CRUMBLE_LEDGE = { x: 0, y: 0, z: -20, w: 12, d: 4 } as const;
+
+/**
+ * Gem rush on a crumbling floor: the floor is the crumble tile grid (built by the
+ * minigame's colliders + the client), with no solid floor underneath. Grab gems
+ * (they only appear on live tiles) before the floor drops out from under you;
+ * fall and you watch from the ledge. Most gems wins.
+ */
 export function gemsMap(): MinigameMap {
-  const HALF = 12;
-  const props: MapProp[] = floorTiles("tileLarge_forest", 6, 6, 4);
-  const colliders: MapCollider[] = [floorCollider(HALF, HALF)];
-  for (const [axis, fixed, from, to] of [
-    ["x", -HALF - 0.4, -HALF, HALF],
-    ["x", HALF + 0.4, -HALF, HALF],
-    ["z", -HALF - 0.4, -HALF, HALF],
-    ["z", HALF + 0.4, -HALF, HALF],
-  ] as const) {
-    const w = wall(axis, fixed, from, to, 1.0, "barrierMedium");
-    props.push(...w.props);
-    colliders.push(...w.colliders);
+  const props: MapProp[] = [];
+  const colliders: MapCollider[] = [];
+
+  // Spectator ledge.
+  const L = CRUMBLE_LEDGE;
+  colliders.push({ x: L.x, y: L.y - 0.5, z: L.z, hx: L.w / 2, hy: 0.5, hz: L.d / 2 });
+  for (const x of [-4, 0, 4]) {
+    props.push({ model: "tileLarge_forest", x, y: L.y, z: L.z, size: 4, anchor: "top" });
   }
   props.push(
-    { model: "tree_forest", x: -10, y: 0, z: -10, size: 3.5 },
-    { model: "tree_forest", x: 10, y: 0, z: 10, size: 3.5 },
-    { model: "plantB_forest", x: 10, y: 0, z: -10, size: 1.6 },
-    { model: "plantA_forest", x: -10, y: 0, z: 10, size: 1.6 },
+    { model: "tree_forest", x: -7, y: L.y, z: L.z, size: 3 },
+    { model: "tree_forest", x: 7, y: L.y, z: L.z, size: 3 },
   );
+
   return {
     id: "gems",
     props,
     colliders,
     spawns: [
-      { x: -8, y: SPAWN_Y, z: -8 },
-      { x: 8, y: SPAWN_Y, z: -8 },
-      { x: -8, y: SPAWN_Y, z: 8 },
-      { x: 8, y: SPAWN_Y, z: 8 },
+      { x: -3, y: SPAWN_Y, z: -3 },
+      { x: 3, y: SPAWN_Y, z: -3 },
+      { x: -3, y: SPAWN_Y, z: 3 },
+      { x: 3, y: SPAWN_Y, z: 3 },
     ],
     killY: -8,
   };
 }
 
-/** All Variety prop basenames any map references — used to preload on the client. */
+/** All Variety prop basenames the game references — used to preload on the client. */
 export function allMapProps(): string[] {
   const maps = [footballMap(), shootingMap(), climbMap(), gemsMap()];
   const set = new Set<string>();
-  for (const m of maps) for (const p of m.props) set.add(p.model);
+  for (const m of maps) {
+    for (const p of m.props) set.add(p.model);
+    for (const s of m.sweepers ?? []) set.add(s.model);
+    for (const h of m.hazards ?? []) set.add(h.model);
+  }
+  // Crumble floor tiles (built client-side, not in any map's props).
+  for (const m of CRUMBLE.models) set.add(m);
   // Entity props (ball / targets / gems) the dynamic layer renders.
   set.add("ball_teamRed");
   set.add("target");

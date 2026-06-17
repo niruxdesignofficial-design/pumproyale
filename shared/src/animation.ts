@@ -11,7 +11,8 @@ export type AnimationState =
   | "dive"
   | "hit"
   | "win"
-  | "lose";
+  | "lose"
+  | "shoot";
 
 /**
  * Map from logical state to the exact clip name in the shared KayKit Rig_Medium
@@ -19,9 +20,10 @@ export type AnimationState =
  * applies to every Adventurer character.
  *
  * A few logical states reuse the closest available clip:
- *   - "fall" -> "Jump_Idle" (airborne loop; no dedicated fall clip)
- *   - "dive" -> "Jump_Full_Long"
- *   - "win"  -> "Interact"  (a celebratory gesture)
+ *   - "fall"  -> "Jump_Idle" (airborne loop; no dedicated fall clip)
+ *   - "dive"  -> "Jump_Full_Long"
+ *   - "win"   -> "Interact"  (a celebratory gesture)
+ *   - "shoot" -> "Throw"     (the only ranged/throwing pose in the rig)
  *
  * Character loading also performs a case-insensitive substring match as a
  * resilience fallback, so older rigs (e.g. PrototypePete) still resolve.
@@ -35,4 +37,5 @@ export const CLIP_NAMES: Record<AnimationState, string> = {
   hit: "Hit_A",
   win: "Interact",
   lose: "Death_A",
+  shoot: "Throw",
 };
