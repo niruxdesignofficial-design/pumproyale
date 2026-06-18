@@ -116,6 +116,7 @@ export class MatchRoom extends Room<MatchState> {
         const yaw = this.sims.get(id)?.yaw ?? 0;
         return { x: Math.sin(yaw), z: Math.cos(yaw) };
       },
+      aim: (id) => this.sims.get(id)?.aim ?? { x: 0, z: 1 },
       addEntity: (kind, variant = 0) => {
         const e = new EntityState();
         e.kind = kind;
@@ -553,6 +554,8 @@ function sanitizeInput(msg: InputIntent): InputIntent {
     jump: Boolean(msg?.jump),
     dive: Boolean(msg?.dive),
     action: Boolean(msg?.action),
+    aimX: clamp(msg?.aimX),
+    aimZ: clamp(msg?.aimZ),
     seq: typeof msg?.seq === "number" && Number.isFinite(msg.seq) ? msg.seq : 0,
   };
 }

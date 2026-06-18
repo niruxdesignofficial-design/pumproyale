@@ -27,6 +27,8 @@ export class PlayerState extends Schema {
   team = -1;
   /** Transient emote text shown above the avatar ("" when none). */
   emote = "";
+  /** Current shooting combo streak (0 outside the shooting round). */
+  combo = 0;
 }
 
 defineTypes(PlayerState, {
@@ -46,6 +48,7 @@ defineTypes(PlayerState, {
   roundScore: "number",
   team: "number",
   emote: "string",
+  combo: "number",
 });
 
 /**

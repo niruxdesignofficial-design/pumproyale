@@ -32,6 +32,10 @@ export interface InputIntent {
   dive: boolean;
   /** Context action button (kick the ball / shoot a target). Edge-detected server-side. */
   action: boolean;
+  /** Aim direction on the ground plane (camera forward) for precise shooting/kicking.
+   * Defaults to (0,0) when the client doesn't send it; the server falls back to facing. */
+  aimX?: number;
+  aimZ?: number;
   /** Client input sequence number, for optional reconciliation. */
   seq: number;
 }

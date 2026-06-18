@@ -211,6 +211,19 @@ export class PlayerSim {
     this.yaw = Math.atan2(this.faceX, this.faceZ);
   }
 
+  /**
+   * Aim direction on the ground plane: the camera-forward the client sends with
+   * its input (precise shooting/kicking), falling back to the body facing for
+   * bots or older clients that don't send it.
+   */
+  get aim(): { x: number; z: number } {
+    const ax = this.input.aimX ?? 0;
+    const az = this.input.aimZ ?? 0;
+    const len = Math.hypot(ax, az);
+    if (len > 0.01) return { x: ax / len, z: az / len };
+    return { x: this.faceX, z: this.faceZ };
+  }
+
   /** Play the one-shot shoot/throw animation for a short window. */
   triggerShoot(): void {
     this.shootTimer = 0.4;

@@ -4,22 +4,50 @@ import type { BotPlan, IMinigame, MinigameContext } from "../IMinigame";
 import type { EntityState } from "../../rooms/schema";
 import { buildMapColliders, removeColliders } from "../mapColliders";
 
+/** Targets sit on the far side (-z) and face the shooters (who are at +z). */
+const TARGET_YAW = 0;
+/** Bot accuracy (chance a fired bot shot hits the target it aimed at). */
+const BOT_ACCURACY = 0.8;
+/** Combo window: consecutive hits within this many seconds keep the streak alive. */
+const COMBO_WINDOW = 2.2;
+
+/**
+ * Target variants (drive scoring, hit size, and the client visual):
+ *  0 normal  +1 (common)
+ *  1 gold    +3 (rarer, smaller — harder to hit, worth more)
+ *  2 decoy   -1 (red X — do NOT shoot it)
+ */
+const TYPE = {
+  NORMAL: 0,
+  GOLD: 1,
+  DECOY: 2,
+} as const;
+const TYPE_VALUE = [1, 3, -1];
+const TYPE_HIT_SCALE = [1, 0.7, 1]; // gold is smaller
+
 interface Target {
   entity: EntityState;
   spot: number;
+  variant: number;
+  /** Lateral slide velocity (units/s); 0 for static targets. */
+  vx: number;
+  baseX: number;
   /** Seconds until it reappears after being hit. */
   hidden: number;
 }
 
-/** Targets sit on the far side (-z) and face the shooters (who are at +z). */
-const TARGET_YAW = 0;
-/** Bot accuracy (chance a fired bot shot hits the target it aimed at). */
-const BOT_ACCURACY = 0.82;
+interface ComboState {
+  streak: number;
+  timer: number;
+}
 
 /**
- * Shooting gallery. Players are sealed in the near zone by a tall barrier and
- * shoot the targets (which face them) on the far side. Hits score; the target
- * pops up elsewhere. Most hits in 40s wins the round.
+ * Target Range. Players are sealed in the near zone behind a tall barrier and
+ * shoot the targets across the gap. Aim is the camera forward (a center crosshair
+ * on the client) and a shot only scores when it actually points at a target —
+ * facing the wall is not enough. Gold targets are worth more, red decoys cost a
+ * point, some targets slide, and consecutive hits build a combo multiplier. Most
+ * points in 40s wins.
  */
 export class ShootingMinigame implements IMinigame {
   readonly id = "shooting";
@@ -31,12 +59,14 @@ export class ShootingMinigame implements IMinigame {
   private targets: Target[] = [];
   private readonly cooldown = new Map<string, number>();
   private readonly botFire = new Map<string, number>();
+  private readonly combos = new Map<string, ComboState>();
   private elapsed = 0;
 
   setup(ctx: MinigameContext): void {
     this.elapsed = 0;
     this.cooldown.clear();
     this.botFire.clear();
+    this.combos.clear();
     this.map = shootingMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -47,13 +77,15 @@ export class ShootingMinigame implements IMinigame {
     for (let i = 0; i < SHOOTING.targets; i++) {
       const spot = this.freeSpot(used);
       used.add(spot);
-      const entity = ctx.addEntity("target", 0);
+      const entity = ctx.addEntity("target", TYPE.NORMAL);
       const s = SHOOTING.spots[spot]!;
       entity.x = s.x;
       entity.y = SHOOTING.y;
       entity.z = s.z;
       entity.yaw = TARGET_YAW;
-      this.targets.push({ entity, spot, hidden: 0 });
+      const t: Target = { entity, spot, variant: TYPE.NORMAL, vx: 0, baseX: s.x, hidden: 0 };
+      this.rollType(t);
+      this.targets.push(t);
     }
 
     const ids = ctx.players();
@@ -62,7 +94,10 @@ export class ShootingMinigame implements IMinigame {
       if (!id) return;
       const sim = ctx.sims.get(id);
       sim?.respawn(s);
-      sim?.setFacing(0, 1); // face the targets (far +z side)
+      sim?.setFacing(0, -1); // face the targets (far -z side)
+      this.combos.set(id, { streak: 0, timer: 0 });
+      const p = ctx.state.players.get(id);
+      if (p) p.combo = 0;
     });
   }
 
@@ -73,6 +108,25 @@ export class ShootingMinigame implements IMinigame {
       if (t.hidden > 0) {
         t.hidden -= dt;
         if (t.hidden <= 0) this.relocate(t);
+        continue;
+      }
+      // Sliding targets drift around their spot.
+      if (t.vx !== 0) {
+        t.entity.x += t.vx * dt;
+        if (Math.abs(t.entity.x - t.baseX) > 2.4) t.vx = -t.vx;
+        t.entity.x = Math.max(-9.2, Math.min(9.2, t.entity.x));
+      }
+    }
+
+    // Decay combo windows.
+    for (const [id, c] of this.combos) {
+      if (c.streak > 0) {
+        c.timer -= dt;
+        if (c.timer <= 0) {
+          c.streak = 0;
+          const p = ctx.state.players.get(id);
+          if (p) p.combo = 0;
+        }
       }
     }
 
@@ -97,7 +151,7 @@ export class ShootingMinigame implements IMinigame {
     const p = sim.position;
 
     if (isBot) {
-      // Bots aim straight at the nearest visible target (skill-gated accuracy).
+      // Bots aim straight at the nearest non-decoy target (skill-gated accuracy).
       const t = this.nearestTarget(p.x, p.z);
       if (!t) return;
       sim.setFacing(t.entity.x - p.x, t.entity.z - p.z);
@@ -105,37 +159,66 @@ export class ShootingMinigame implements IMinigame {
       return;
     }
 
-    // Humans: forgiving aim cone around their facing direction.
-    const f = ctx.facing(id);
+    // Humans: cast a ray from the player along the camera aim and hit the nearest
+    // target the ray actually passes through (within the target's hit radius).
+    const a = ctx.aim(id);
     let best: Target | null = null;
-    let bestDist = Infinity;
+    let bestAlong = Infinity;
     for (const t of this.targets) {
       if (t.hidden > 0) continue;
       const dx = t.entity.x - p.x;
       const dz = t.entity.z - p.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > SHOOTING.range || dist < 0.001) continue;
-      const dot = (dx / dist) * f.x + (dz / dist) * f.z;
-      if (dot < Math.cos(SHOOTING.cone)) continue;
-      if (dist < bestDist) {
-        bestDist = dist;
+      const along = dx * a.x + dz * a.z; // distance along the aim ray
+      if (along <= 0 || along > SHOOTING.range) continue;
+      // Perpendicular distance from the target center to the ray.
+      const perp = Math.hypot(dx - a.x * along, dz - a.z * along);
+      if (perp > SHOOTING.hitRadius * TYPE_HIT_SCALE[t.variant]!) continue;
+      if (along < bestAlong) {
+        bestAlong = along;
         best = t;
       }
     }
     if (best) this.hit(ctx, id, best);
+    else this.breakCombo(ctx, id); // a miss resets the streak
   }
 
   private hit(ctx: MinigameContext, id: string, t: Target): void {
-    ctx.addScore(id, 1);
+    const value = TYPE_VALUE[t.variant]!;
+    const c = this.combos.get(id) ?? { streak: 0, timer: 0 };
+
+    if (t.variant === TYPE.DECOY) {
+      // Shooting a decoy costs a point and breaks the combo.
+      ctx.addScore(id, value);
+      this.breakCombo(ctx, id);
+    } else {
+      c.streak += 1;
+      c.timer = COMBO_WINDOW;
+      this.combos.set(id, c);
+      // Every 3rd consecutive hit adds an escalating bonus.
+      const bonus = Math.floor(c.streak / 3);
+      ctx.addScore(id, value + bonus);
+      const p = ctx.state.players.get(id);
+      if (p) p.combo = c.streak;
+    }
+
     t.entity.active = false;
     t.hidden = 0.5;
+  }
+
+  private breakCombo(ctx: MinigameContext, id: string): void {
+    const c = this.combos.get(id);
+    if (!c || c.streak === 0) return;
+    c.streak = 0;
+    c.timer = 0;
+    const p = ctx.state.players.get(id);
+    if (p) p.combo = 0;
   }
 
   private nearestTarget(x: number, z: number): Target | null {
     let best: Target | null = null;
     let bestDist: number = SHOOTING.range;
     for (const t of this.targets) {
-      if (t.hidden > 0) continue;
+      if (t.hidden > 0 || t.variant === TYPE.DECOY) continue;
       const d = Math.hypot(t.entity.x - x, t.entity.z - z);
       if (d < bestDist) {
         bestDist = d;
@@ -152,7 +235,18 @@ export class ShootingMinigame implements IMinigame {
     t.entity.x = s.x;
     t.entity.z = s.z;
     t.entity.yaw = TARGET_YAW;
+    t.baseX = s.x;
+    this.rollType(t);
     t.entity.active = true;
+  }
+
+  /** Assign a fresh type + maybe a slide when a target (re)appears. */
+  private rollType(t: Target): void {
+    const r = Math.random();
+    t.variant = r < 0.16 ? TYPE.GOLD : r < 0.34 ? TYPE.DECOY : TYPE.NORMAL;
+    t.entity.variant = t.variant;
+    // ~30% of non-decoy targets slide (decoys stay put so they're avoidable).
+    t.vx = t.variant !== TYPE.DECOY && Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) * 2.2 : 0;
   }
 
   private freeSpot(used: Set<number>): number {
@@ -170,6 +264,11 @@ export class ShootingMinigame implements IMinigame {
     removeColliders(ctx.physics, this.colliders);
     this.colliders = [];
     this.targets = [];
+    for (const id of ctx.players()) {
+      const p = ctx.state.players.get(id);
+      if (p) p.combo = 0;
+    }
+    this.combos.clear();
     ctx.setPlatformEnabled(true);
   }
 

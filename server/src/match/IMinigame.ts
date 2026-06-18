@@ -41,6 +41,9 @@ export interface MinigameContext {
   consumeAction(id: string): boolean;
   /** A player's facing direction on the ground plane (unit vector). */
   facing(id: string): { x: number; z: number };
+  /** A player's aim direction (camera forward) on the ground plane (unit vector);
+   * falls back to facing for bots / clients that don't send an aim. */
+  aim(id: string): { x: number; z: number };
   /** Append a synced dynamic entity (ball / target / gem) and return it. */
   addEntity(kind: string, variant?: number): EntityState;
   /** Toggle the solid lobby platform collider (minigames build their own floor). */

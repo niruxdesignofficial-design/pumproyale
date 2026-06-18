@@ -61,6 +61,7 @@ interface NetPlayer {
   roundScore: number;
   team: number;
   emote: string;
+  combo: number;
 }
 
 /** Ground-ring color for a player: team color in team rounds, else candy color. */
@@ -215,9 +216,12 @@ export class Game {
       $(player).onChange(() => {
         avatar.setTarget(player.x, player.y, player.z, player.yaw);
         const anim = asAnim(player.anim);
-        // Cosmetic shot tracer when a player starts the shoot animation.
+        // Cosmetic shot tracer when a player starts the shoot animation. The local
+        // shooter fires along the camera aim (matching the crosshair).
         if (anim === "shoot" && lastAnim !== "shoot") {
-          this.spawnTracer(avatar.position, player.yaw);
+          const yaw =
+            sessionId === this.localId ? Math.atan2(this.forward.x, this.forward.z) : player.yaw;
+          this.spawnTracer(avatar.position, yaw);
           if (sessionId === this.localId) sound.play("shoot");
         }
         // Dust puff when landing (an airborne anim resolves to grounded movement).
@@ -242,7 +246,7 @@ export class Game {
             sound.play("pickup");
           }
           this.localRoundScore = player.roundScore;
-          gameStore.set({ localPlacement: player.placement });
+          gameStore.set({ localPlacement: player.placement, localCombo: player.combo });
         }
       });
     });
@@ -454,6 +458,9 @@ export class Game {
       jump: this.input.isActive("jump"),
       dive: this.input.isActive("dive"),
       action: this.input.isActive("action"),
+      // Aim = camera forward on the ground plane (precise shooting / kicking).
+      aimX: this.forward.x,
+      aimZ: this.forward.z,
       seq: this.seq++,
     };
   }

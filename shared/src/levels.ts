@@ -343,8 +343,11 @@ export const SHOOTING = {
   targets: 6,
   /** Max shot range (world units). */
   range: 22,
-  /** Aim cone half-angle (radians) — forgiving for keyboard aim. */
+  /** Aim cone half-angle (radians) — only used for the bot fallback aim. */
   cone: 0.34,
+  /** Hit radius (m): a shot hits a target when the aim ray passes this close to
+   * its center. The crosshair must be on the target — facing the wall is not enough. */
+  hitRadius: 0.9,
   /** Seconds between shots. */
   cooldown: 0.45,
   /** Candidate target spots (far side of the barrier, at -z so they face the

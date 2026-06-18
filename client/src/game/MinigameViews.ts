@@ -189,13 +189,29 @@ function buildEntity(e: NetEntity): THREE.Object3D | null {
   if (e.kind === "ball") return makeProp("ball_teamRed", 1.1, "center");
   if (e.kind === "target") {
     // A stand plus a bullseye that faces the players (rotated by the entity yaw).
+    // Variant: 0 normal, 1 gold (+3, smaller), 2 decoy (-1, red ring — don't shoot).
     const g = new THREE.Group();
     const stand = makeProp("targetStand", 1.7, "bottom");
     if (stand) g.add(stand);
-    const bull = makeProp("target", 1.5, "center");
+    const scale = e.variant === 1 ? 1.05 : 1.5;
+    const bull = makeProp("target", scale, "center");
     if (bull) {
       bull.position.y = 1.3;
       g.add(bull);
+    }
+    // A colored backing ring flags the special types at a glance.
+    if (e.variant === 1 || e.variant === 2) {
+      const color = e.variant === 1 ? 0xffd34a : 0xff3a3a;
+      const ringGeo = new THREE.TorusGeometry(e.variant === 1 ? 0.55 : 0.8, 0.1, 8, 24);
+      const ringMat = new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.5,
+        roughness: 0.5,
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.position.y = 1.3;
+      g.add(ring);
     }
     return g;
   }

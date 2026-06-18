@@ -10,7 +10,8 @@ const MEDALS = ["/assets/medals/gold.png", "/assets/medals/silver.png", "/assets
 /** Short objective + control hint per minigame. */
 function objective(minigame: string): string {
   if (/soccer|football/i.test(minigame)) return "Score in the enemy team's goal — E / click to kick";
-  if (/target|range|shoot/i.test(minigame)) return "Shoot the targets across the barrier — E / click";
+  if (/target|range|shoot/i.test(minigame))
+    return "Aim with the mouse, E / click to shoot — gold = +3, avoid the red decoys";
   if (/climb|tower/i.test(minigame)) return "Climb to the flag — dodge the bars and rolling balls";
   if (/gem/i.test(minigame)) return "Grab gems — the floor is falling!";
   return "";
@@ -57,6 +58,7 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
 
   const playing = state.matchPhase === "playing";
   const isSoccer = /soccer|football/i.test(state.minigame);
+  const isShooting = /target|range|shoot/i.test(state.minigame);
   const blueGoals = state.standings.find((s) => s.team === 0)?.roundScore ?? 0;
   const redGoals = state.standings.find((s) => s.team === 1)?.roundScore ?? 0;
 
@@ -107,6 +109,15 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
         <div className="hud-hint" style={{ top: 64, bottom: "auto" }}>
           {objective(state.minigame)}
         </div>
+      )}
+
+      {playing && isShooting && (
+        <>
+          <div className="hud-crosshair" aria-hidden />
+          {state.localCombo > 1 && (
+            <div className="hud-combo">Combo x{state.localCombo}</div>
+          )}
+        </>
       )}
 
       {state.matchPhase === "waiting" && <LobbyPanel state={state} />}

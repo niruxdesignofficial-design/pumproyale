@@ -36,6 +36,7 @@ export interface GameState {
   // Local player.
   readonly localAlive: boolean;
   readonly localPlacement: number;
+  readonly localCombo: number;
   readonly isLocalWinner: boolean;
   readonly winnerName: string;
   // Room code for private games (shown in the lobby so the host can share it).
@@ -58,6 +59,7 @@ const INITIAL: GameState = {
   banner: "",
   localAlive: true,
   localPlacement: 0,
+  localCombo: 0,
   isLocalWinner: false,
   winnerName: "",
   roomCode: "",
