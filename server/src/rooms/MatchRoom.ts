@@ -112,6 +112,7 @@ export class MatchRoom extends Room<MatchState> {
         if (v) this.actionEdge.set(id, false);
         return v;
       },
+      actionHeld: (id) => this.lastAction.get(id) ?? false,
       facing: (id) => {
         const yaw = this.sims.get(id)?.yaw ?? 0;
         return { x: Math.sin(yaw), z: Math.cos(yaw) };

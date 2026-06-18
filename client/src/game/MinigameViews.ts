@@ -102,6 +102,34 @@ export class MinigameViews {
       }
     }
     if (next === "gems") this.buildCrumble();
+    if (next === "football") this.buildPitchDecor();
+  }
+
+  /** Painted center circle + spot so the soccer pitch reads like a real field. */
+  private buildPitchDecor(): void {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ringGeo = new THREE.RingGeometry(2.7, 3.0, 48);
+    const ring = new THREE.Mesh(ringGeo, mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    this.container.add(ring);
+    const spotGeo = new THREE.CircleGeometry(0.35, 24);
+    const spot = new THREE.Mesh(spotGeo, mat);
+    spot.rotation.x = -Math.PI / 2;
+    spot.position.y = 0.06;
+    this.container.add(spot);
+    // A halfway line across the pitch (thin long quad).
+    const lineGeo = new THREE.PlaneGeometry(16, 0.18);
+    const line = new THREE.Mesh(lineGeo, mat);
+    line.rotation.x = -Math.PI / 2;
+    line.position.y = 0.06;
+    this.container.add(line);
   }
 
   update(

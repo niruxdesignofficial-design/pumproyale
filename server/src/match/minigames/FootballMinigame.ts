@@ -6,9 +6,15 @@ import { buildMapColliders, removeColliders } from "../mapColliders";
 
 const BALL_R = 0.5;
 const KICK_RANGE = 2.0;
-const KICK_POWER = 13;
+/** Charged kick: a tap is a soft pass, a held button builds toward a hard shot. */
+const KICK_MIN = 8;
+const KICK_MAX = 22;
 const KICK_UP = 3.0;
-const MAX_BALL_SPEED = 26;
+/** Seconds of holding to reach full power (also the auto-fire cap). */
+const CHARGE_MAX = 0.7;
+/** Brief lockout after a kick so you cannot instantly re-kick the same ball. */
+const KICK_COOLDOWN = 0.25;
+const MAX_BALL_SPEED = 28;
 
 /** Enemy goal z for a team (team 0 Blue attacks +z, team 1 Red attacks -z). */
 function enemyGoalZ(team: number): number {
@@ -37,12 +43,19 @@ export class FootballMinigame implements IMinigame {
   private resetTimer = 0;
   private elapsed = 0;
   private readonly teamGoals = [0, 0];
+  /** Per-player kick charge (s held near the ball) + held-last-tick + cooldown. */
+  private readonly charge = new Map<string, number>();
+  private readonly wasHeld = new Map<string, boolean>();
+  private readonly kickCd = new Map<string, number>();
 
   setup(ctx: MinigameContext): void {
     this.elapsed = 0;
     this.resetTimer = 0;
     this.teamGoals[0] = 0;
     this.teamGoals[1] = 0;
+    this.charge.clear();
+    this.wasHeld.clear();
+    this.kickCd.clear();
     this.map = footballMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -96,16 +109,39 @@ export class FootballMinigame implements IMinigame {
 
     const bp = body.translation();
 
-    // Players push by contact; kicks fling the ball in their facing direction.
+    // Players push by contact; kicks fling the ball in their AIM direction with
+    // charged power: a tap is a soft pass, holding builds toward a hard shot
+    // (auto-firing at full charge so bots, who hold near the ball, still shoot).
     for (const id of ctx.players()) {
       const sim = ctx.sims.get(id);
       if (!sim) continue;
       const p = sim.position;
       const dist = Math.hypot(bp.x - p.x, bp.z - p.z);
-      if (dist <= KICK_RANGE && ctx.consumeAction(id)) {
-        const f = ctx.facing(id);
-        body.applyImpulse({ x: f.x * KICK_POWER, y: KICK_UP, z: f.z * KICK_POWER }, true);
+      const near = dist <= KICK_RANGE;
+      const held = ctx.actionHeld(id);
+      const prevHeld = this.wasHeld.get(id) ?? false;
+      let cd = (this.kickCd.get(id) ?? 0) - dt;
+      let c = this.charge.get(id) ?? 0;
+
+      if (cd <= 0 && near && held) {
+        c = Math.min(CHARGE_MAX, c + dt);
+        if (c >= CHARGE_MAX) {
+          this.kick(body, ctx, id, c);
+          c = 0;
+          cd = KICK_COOLDOWN;
+        }
+      } else if (cd <= 0 && near && prevHeld && !held) {
+        // Released next to the ball: kick with the power built up so far.
+        this.kick(body, ctx, id, c);
+        c = 0;
+        cd = KICK_COOLDOWN;
+      } else if (!held) {
+        c = 0;
       }
+
+      this.charge.set(id, c);
+      this.wasHeld.set(id, held);
+      this.kickCd.set(id, Math.max(0, cd));
     }
 
     // Goals: the ball in a team's net scores for the OTHER team.
@@ -144,6 +180,16 @@ export class FootballMinigame implements IMinigame {
       const p = ctx.state.players.get(id);
       if (p && (p.team === 0 || p.team === 1)) ctx.setScore(id, this.teamGoals[p.team] ?? 0);
     }
+  }
+
+  /** Apply a charged kick impulse along the player's aim (camera for humans). */
+  private kick(body: RAPIER.RigidBody, ctx: MinigameContext, id: string, charge: number): void {
+    const a = ctx.aim(id);
+    const t = Math.min(1, charge / CHARGE_MAX);
+    const power = KICK_MIN + t * (KICK_MAX - KICK_MIN);
+    const up = KICK_UP * (0.7 + t * 0.6);
+    body.applyImpulse({ x: a.x * power, y: up, z: a.z * power }, true);
+    ctx.sims.get(id)?.triggerShoot();
   }
 
   private resetBall(): void {

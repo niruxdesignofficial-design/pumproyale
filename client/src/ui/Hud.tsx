@@ -9,7 +9,8 @@ const MEDALS = ["/assets/medals/gold.png", "/assets/medals/silver.png", "/assets
 
 /** Short objective + control hint per minigame. */
 function objective(minigame: string): string {
-  if (/soccer|football/i.test(minigame)) return "Score in the enemy team's goal — E / click to kick";
+  if (/soccer|football/i.test(minigame))
+    return "Score in the enemy goal — aim with the mouse, hold E / click to charge a kick";
   if (/target|range|shoot/i.test(minigame))
     return "Aim with the mouse, E / click to shoot — gold = +3, avoid the red decoys";
   if (/climb|tower/i.test(minigame)) return "Climb to the flag — dodge the bars and rolling balls";

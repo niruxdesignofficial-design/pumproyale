@@ -39,6 +39,8 @@ export interface MinigameContext {
   getScore(id: string): number;
   /** Consume the action-button edge (kick / shoot) for a player, if any. */
   consumeAction(id: string): boolean;
+  /** Whether the action button is currently held (for charged kicks). */
+  actionHeld(id: string): boolean;
   /** A player's facing direction on the ground plane (unit vector). */
   facing(id: string): { x: number; z: number };
   /** A player's aim direction (camera forward) on the ground plane (unit vector);
