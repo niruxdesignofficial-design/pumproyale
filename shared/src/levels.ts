@@ -478,6 +478,20 @@ export const CLIMB_ROUTES: { easy: ClimbStep[]; hard: ClimbStep[] } = {
   hard: [CLIMB_BASE, CLIMB_FORK, ...CLIMB_HARD, CLIMB_SUMMIT],
 };
 
+/**
+ * Checkpoint platforms: a fall respawns the climber at the highest checkpoint they
+ * have already reached (not the very start, not the last platform). The base is the
+ * starting checkpoint; then a few up each route, marked with flags in the map.
+ */
+export const CLIMB_CHECKPOINTS: ClimbStep[] = [
+  CLIMB_BASE,
+  CLIMB_EASY[5]!,
+  CLIMB_EASY[11]!,
+  CLIMB_EASY[17]!,
+  CLIMB_HARD[2]!,
+  CLIMB_HARD[5]!,
+];
+
 /** Every platform (for colliders + which-step-am-I-on checks). */
 export function climbPlatforms(): ClimbStep[] {
   return [CLIMB_BASE, CLIMB_FORK, ...CLIMB_EASY, ...CLIMB_HARD, CLIMB_SUMMIT];
@@ -523,10 +537,12 @@ export function climbMap(): MinigameMap {
   for (const s of CLIMB_HARD) props.push(...tileStep(s, "tileLarge_teamYellow"));
   props.push(...tileStep(CLIMB_SUMMIT, "tileLarge_teamYellow"));
 
-  // Hard-route rotating sweepers (more developed — three bars up the climb).
+  // Hard-route rotating sweepers (more developed — four bars up the climb; the
+  // extra one on step 4 keeps the easy/yellow route from being a free walk-up).
   const sweepers: MapSweeper[] = [
     sweeperOn(CLIMB_HARD[1]!, 1.5, 0, "swiperLong_teamRed"),
     sweeperOn(CLIMB_HARD[3]!, -1.6, 1.0, "swiperLong_teamBlue"),
+    sweeperOn(CLIMB_HARD[4]!, 2.0, 0.5, "swiperLong_teamRed"),
     sweeperOn(CLIMB_HARD[5]!, 1.7, 2.0, "swiperLong_teamYellow"),
   ];
 
@@ -567,6 +583,13 @@ export function climbMap(): MinigameMap {
     { model: "tree_forest", x: 10, y: 0, z: -8, size: 3 },
     { model: "rocksB_forest", x: -8, y: 0, z: -5, size: 2 },
   );
+
+  // Checkpoint flags: a fall returns you to the highest one you've reached. Skip
+  // the base (the obvious start) so the flags read as mid-route safe spots.
+  for (const cp of CLIMB_CHECKPOINTS) {
+    if (cp === CLIMB_BASE) continue;
+    props.push({ model: "flag_teamRed", x: cp.x, y: cp.y, z: cp.z + cp.d / 2 - 0.3, size: 1.5 });
+  }
 
   return {
     id: "climb",

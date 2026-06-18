@@ -1,10 +1,10 @@
 import type RAPIER from "@dimforge/rapier3d-compat";
 import {
+  CLIMB_CHECKPOINTS,
   CLIMB_FINISH_Y,
   CLIMB_ROUTES,
   PHYS,
   climbMap,
-  climbPlatforms,
   climbSummit,
   launcherBall,
   sweeperHit,
@@ -36,7 +36,6 @@ export class ClimbMinigame implements IMinigame {
 
   private map: MinigameMap = climbMap();
   private colliders: RAPIER.Collider[] = [];
-  private readonly platforms: ClimbStep[] = climbPlatforms();
   private readonly summit = climbSummit();
   private readonly climbers = new Map<string, Climber>();
   /** Per-bot progress index along its route (so bots follow the weave reliably). */
@@ -72,9 +71,10 @@ export class ClimbMinigame implements IMinigame {
       if (!sim || !c) continue;
       const p = sim.position;
 
-      // Bank a checkpoint on the platform under the player.
-      const step = this.stepUnder(p.x, p.y, p.z);
-      if (step) c.checkpoint = { x: p.x, y: step.y + 0.8, z: p.z };
+      // Bank the highest checkpoint platform the player has reached. A fall sends
+      // them back here (a few platforms back), not to the very start.
+      const cp = this.checkpointUnder(p.x, p.y, p.z);
+      if (cp && cp.y + 1.0 > c.checkpoint.y) c.checkpoint = { x: cp.x, y: cp.y + 1.0, z: cp.z };
 
       if (!c.finished && sim.bumperCooldown <= 0) {
         // Rotating bars (jump over to clear).
@@ -180,12 +180,13 @@ export class ClimbMinigame implements IMinigame {
     return { tx: target.x, tz: target.z, jump };
   }
 
-  private stepUnder(x: number, y: number, z: number): ClimbStep | null {
-    for (const s of this.platforms) {
+  /** The checkpoint platform the player is currently standing on, if any. */
+  private checkpointUnder(x: number, y: number, z: number): ClimbStep | null {
+    for (const s of CLIMB_CHECKPOINTS) {
       if (
         Math.abs(x - s.x) <= s.w / 2 &&
         Math.abs(z - s.z) <= s.d / 2 &&
-        Math.abs(y - (s.y + 0.9)) <= 0.8
+        Math.abs(y - (s.y + 0.9)) <= 0.9
       ) {
         return s;
       }
