@@ -7,7 +7,6 @@ import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { sound } from "../core/Sound";
-import { getAuthWallet } from "../solana/auth";
 import { createScene } from "./Scene";
 import { MinigameViews } from "./MinigameViews";
 import { Avatar } from "./Avatar";
@@ -15,6 +14,7 @@ import { getCharacterGltf, preloadCharacters } from "./characterModel";
 import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
 import { getPlayerName } from "./name";
+import { getPlayerWallet } from "./wallet";
 import { LocalSession, OnlineSession, type MatchSession } from "./session";
 import { isOnlineEnabled } from "../net/NetClient";
 import { gameStore, type Standing } from "./store";
@@ -106,7 +106,7 @@ export class Game {
     const options = {
       name: getPlayerName() || randomName(),
       character: getSelectedCharacter(),
-      wallet: getAuthWallet() ?? undefined,
+      wallet: getPlayerWallet() || undefined,
     };
 
     let session: MatchSession;

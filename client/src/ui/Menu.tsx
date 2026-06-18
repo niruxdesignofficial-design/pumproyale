@@ -1,27 +1,29 @@
 import { useState } from "react";
-import { WalletPanel } from "./WalletPanel";
 import { Leaderboard } from "./Leaderboard";
-import { PrizeDashboard } from "./PrizeDashboard";
 import { Online } from "./Hud";
 import { sound } from "../core/Sound";
 import { getPlayerName, isValidPlayerName, setPlayerName } from "../game/name";
+import { getPlayerWallet, isValidWallet, setPlayerWallet } from "../game/wallet";
 import { setPlayMode } from "../game/matchMode";
 import { isOnlineEnabled, type PlayMode } from "../net/NetClient";
 
 /**
- * Main menu: title, name entry, online counter, Quick play, and (when a game
- * server is configured) "play with friends": create a private room to get a
- * shareable code, or join one by code.
+ * Main menu: title, name + wallet entry, online counter, Quick play, and (when a
+ * game server is configured) "play with friends": create a private room to get a
+ * shareable code, or join one by code. A wallet address is required to play.
  */
 export function Menu({ onPlay }: { onPlay: () => void }) {
   const [name, setName] = useState(getPlayerName());
+  const [wallet, setWallet] = useState(getPlayerWallet());
   const [code, setCode] = useState("");
-  const valid = isValidPlayerName(name);
+  const nameOk = isValidPlayerName(name);
+  const walletOk = isValidWallet(wallet);
+  const canPlay = nameOk && walletOk;
   const online = isOnlineEnabled();
 
   const go = (mode: PlayMode) => {
     sound.enable();
-    if (!valid) {
+    if (!canPlay) {
       sound.play("error");
       return;
     }
@@ -30,6 +32,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
       return;
     }
     setPlayerName(name);
+    setPlayerWallet(wallet);
     setPlayMode(mode);
     sound.play("click");
     onPlay();
@@ -37,8 +40,6 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
 
   return (
     <div className="screen menu-screen">
-      <WalletPanel />
-      <PrizeDashboard />
       <div className="menu-hero">
         <h1 className="game-title">PumpRoyale</h1>
         <p className="game-sub">4 players. 4 minigames. Highest points wins.</p>
@@ -58,7 +59,26 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
           />
         </div>
 
-        <button className="btn-primary btn-big" onClick={() => go({ kind: "quick" })} disabled={!valid}>
+        <div className="name-row">
+          <span className="name-label">Your wallet address</span>
+          <input
+            className="name-input"
+            value={wallet}
+            maxLength={64}
+            placeholder="Paste your Solana wallet address"
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => setWallet(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") go({ kind: "quick" });
+            }}
+          />
+          {wallet.length > 0 && !walletOk && (
+            <span className="name-warn">Enter a valid wallet address to play.</span>
+          )}
+        </div>
+
+        <button className="btn-primary btn-big" onClick={() => go({ kind: "quick" })} disabled={!canPlay}>
           Quick play
         </button>
 
@@ -67,7 +87,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
             <button
               className="btn-secondary"
               onClick={() => go({ kind: "create" })}
-              disabled={!valid}
+              disabled={!canPlay}
             >
               Create private game
             </button>
@@ -85,7 +105,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
               <button
                 className="btn-secondary"
                 onClick={() => go({ kind: "join", code })}
-                disabled={!valid || code.trim().length === 0}
+                disabled={!canPlay || code.trim().length === 0}
               >
                 Join with code
               </button>

@@ -663,6 +663,10 @@ body,
   text-transform: uppercase;
   color: var(--muted);
 }
+.name-warn {
+  font-size: 12px;
+  color: #ff6a6a;
+}
 
 /* Lobby card + course preview minimap */
 .lobby {
