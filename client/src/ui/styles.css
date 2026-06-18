@@ -53,13 +53,12 @@ body,
     linear-gradient(180deg, #0a130e 0%, #0b1410 100%);
 }
 
-/* Menu background image (with a dark overlay so the text/buttons stay legible). */
-.menu-screen {
-  background-image:
-    linear-gradient(180deg, rgba(6, 12, 10, 0.55), rgba(6, 12, 10, 0.82)),
-    url("/assets/menu-bg.jpg");
-  background-size: cover;
-  background-position: center;
+/* Menu background image (with a dark overlay so the text/buttons stay legible).
+   Uses .screen.menu-screen specificity to win over the later generic .screen rule. */
+.screen.menu-screen {
+  background:
+    linear-gradient(180deg, rgba(6, 12, 10, 0.32), rgba(6, 12, 10, 0.62)),
+    url("/assets/menu-bg.jpg") center / cover no-repeat;
 }
 
 .menu-hero {
