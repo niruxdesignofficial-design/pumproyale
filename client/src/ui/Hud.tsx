@@ -78,7 +78,7 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
   return (
     <div className="hud">
       <div className="hud-panel hud-topleft">
-        <div className="hud-title">PumpRoyale</div>
+        <div className="hud-title">Pump Guys</div>
         <div className="hud-sub">
           {playing && state.minigame
             ? `Round ${state.round}/${state.roundCount}: ${state.minigame}`

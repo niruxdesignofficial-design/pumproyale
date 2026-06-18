@@ -41,7 +41,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
   return (
     <div className="screen menu-screen">
       <div className="menu-hero">
-        <h1 className="game-title">PumpRoyale</h1>
+        <h1 className="game-title">Pump Guys</h1>
         <p className="game-sub">4 players. 4 minigames. Highest points wins.</p>
         <Online />
 

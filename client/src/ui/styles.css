@@ -53,6 +53,15 @@ body,
     linear-gradient(180deg, #0a130e 0%, #0b1410 100%);
 }
 
+/* Menu background image (with a dark overlay so the text/buttons stay legible). */
+.menu-screen {
+  background-image:
+    linear-gradient(180deg, rgba(6, 12, 10, 0.55), rgba(6, 12, 10, 0.82)),
+    url("/assets/menu-bg.jpg");
+  background-size: cover;
+  background-position: center;
+}
+
 .menu-hero {
   display: flex;
   flex-direction: column;
