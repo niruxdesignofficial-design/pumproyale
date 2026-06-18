@@ -15,7 +15,8 @@ import { getCharacterGltf, preloadCharacters } from "./characterModel";
 import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
 import { getPlayerName } from "./name";
-import { LocalGameManager } from "./LocalGameManager";
+import { LocalSession, OnlineSession, type MatchSession } from "./session";
+import { isOnlineEnabled } from "../net/NetClient";
 import { gameStore, type Standing } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -40,10 +41,11 @@ function ringColorFor(team: number, colorIndex: number): number {
 }
 
 /**
- * Offline game client. Runs the full match simulation locally (LocalGameManager —
- * physics + the four minigames + bot AI in the browser, 1 human + 3 bots), renders
- * an Avatar per player, samples local input, and mirrors the live state into the
- * store each frame. No network: there is no server to lose connection to.
+ * Game client. Reads an authoritative MatchState each frame and renders an Avatar
+ * per player, samples local input, and mirrors the live state into the store. The
+ * state comes from a MatchSession: online (a shared Colyseus room with friends +
+ * bots) when a server is configured, otherwise offline (the full match simulated
+ * in-browser, 1 human + 3 bots). The render path is identical for both.
  */
 export class Game {
   private readonly renderer: Renderer;
@@ -52,8 +54,8 @@ export class Game {
   private readonly input = new Input();
   private readonly loop: GameLoop;
   private readonly minigameViews: MinigameViews;
-  private local: LocalGameManager | null = null;
-  private readonly localId = "local";
+  private session: MatchSession | null = null;
+  private localId = "local";
 
   private readonly avatars = new Map<string, Avatar>();
   private readonly tracers: { mesh: THREE.Mesh; ttl: number }[] = [];
@@ -101,23 +103,37 @@ export class Game {
     await Promise.all([preloadCharacters(), preloadVarietyProps()]);
     if (this.disposed) return;
 
-    const local = new LocalGameManager({
+    const options = {
       name: getPlayerName() || randomName(),
       character: getSelectedCharacter(),
-      wallet: getAuthWallet() ?? null,
-    });
+      wallet: getAuthWallet() ?? undefined,
+    };
+
+    let session: MatchSession;
     try {
-      await local.start();
+      if (isOnlineEnabled()) {
+        gameStore.set({ status: "connecting" });
+        try {
+          session = await OnlineSession.create(options);
+        } catch (err) {
+          console.warn("[net] online connect failed, falling back to offline", err);
+          session = await LocalSession.create(options);
+        }
+      } else {
+        session = await LocalSession.create(options);
+      }
     } catch (err) {
-      console.error("[local] failed to start", err);
+      console.error("[game] failed to start", err);
       gameStore.set({ status: "error", error: "Could not start the game engine." });
       return;
     }
     if (this.disposed) {
-      local.dispose();
+      session.dispose();
       return;
     }
-    this.local = local;
+    this.session = session;
+    this.localId = session.localId;
+    if (session.roomCode) gameStore.set({ roomCode: session.roomCode });
 
     this.input.attach();
     window.addEventListener("keydown", this.enableSound, { once: true });
@@ -133,8 +149,8 @@ export class Game {
     this.input.detach();
     window.removeEventListener("keydown", this.enableSound);
     window.removeEventListener("keydown", this.onEmoteKey);
-    this.local?.dispose();
-    this.local = null;
+    this.session?.dispose();
+    this.session = null;
     for (const t of this.tracers) {
       this.scene.remove(t.mesh);
       t.mesh.geometry.dispose();
@@ -155,17 +171,17 @@ export class Game {
   }
 
   private readonly onFrame = (dt: number): void => {
-    const local = this.local;
-    if (local) {
-      local.setLocalInput(this.sampleInput());
-      local.step(dt);
-      this.syncFromState(local.state);
+    const session = this.session;
+    if (session) {
+      session.setInput(this.sampleInput());
+      session.step(dt);
+      this.syncFromState(session.state);
     }
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
 
-    if (local) {
-      const st = local.state;
+    if (session) {
+      const st = session.state;
       let view = "";
       if (st.phase === "waiting" || st.phase === "matchmaking") view = "lobby";
       else if ((st.phase === "playing" || st.phase === "intro") && st.minigame) view = st.minigame;
@@ -411,7 +427,7 @@ export class Game {
     const map: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
     const id = map[e.code];
     if (id === undefined) return;
-    this.local?.sendEmote(id);
+    this.session?.sendEmote(id);
   };
 
   private sampleInput(): InputIntent {
