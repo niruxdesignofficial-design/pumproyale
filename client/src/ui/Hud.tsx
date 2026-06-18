@@ -68,7 +68,7 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
   return (
     <div className="hud">
       <div className="hud-panel hud-topleft">
-        <div className="hud-title">Party Royale</div>
+        <div className="hud-title">PumpRoyale</div>
         <div className="hud-sub">
           {playing && state.minigame
             ? `Round ${state.round}/${state.roundCount}: ${state.minigame}`
@@ -117,6 +117,16 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
       {playing && isShooting && <div className="hud-crosshair" aria-hidden />}
       {playing && (isShooting || isGems) && state.localCombo > 1 && (
         <div className="hud-combo">Combo x{state.localCombo}</div>
+      )}
+
+      {playing && state.scorePop.amount !== 0 && (
+        <div
+          key={state.scorePop.key}
+          className={`score-pop${state.scorePop.amount < 0 ? " neg" : ""}`}
+        >
+          {state.scorePop.amount > 0 ? "+" : ""}
+          {Math.round(state.scorePop.amount)}
+        </div>
       )}
 
       {state.matchPhase === "waiting" && <LobbyPanel state={state} />}

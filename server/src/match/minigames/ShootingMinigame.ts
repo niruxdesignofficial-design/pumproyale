@@ -282,7 +282,9 @@ export class ShootingMinigame implements IMinigame {
     }
     this.botFire.set(id, t);
     const idx = ctx.botIndex(id);
-    const tx = (idx - 1.5) * 4; // spread along the firing line
+    // Spread along the firing line and strafe slowly so bots read as actively
+    // playing (lining up shots), not standing idle.
+    const tx = (idx - 1.5) * 4 + Math.sin(this.elapsed * 0.9 + idx * 1.7) * 2.2;
     return { tx, tz: 6, action }; // hold the shooter line (near +z), fire on cadence
   }
 }

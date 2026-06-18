@@ -31,8 +31,10 @@ export class Avatar {
 
   private emoteSprite: THREE.Sprite | null = null;
   private emoteText = "";
+  private youArrow: THREE.Mesh | null = null;
+  private bob = 0;
 
-  constructor(characterId: string, ringColor: number) {
+  constructor(characterId: string, ringColor: number, name = "") {
     const gltf = getCharacterGltf(characterId);
     if (gltf) {
       const model = cloneSkeleton(gltf.scene);
@@ -57,6 +59,23 @@ export class Avatar {
       this.buildFallback(ringColor);
     }
     this.addRing(ringColor);
+    this.addContactShadow();
+    if (name) this.addNameTag(name, ringColor);
+  }
+
+  /** Mark this as the local player: a bobbing arrow + a brighter ground ring. */
+  setLocal(): void {
+    this.ringMat?.color.set(0x3df089);
+    if (this.ringMat) this.ringMat.opacity = 1;
+    const geo = new THREE.ConeGeometry(0.22, 0.4, 4);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x3df089, depthTest: false });
+    const arrow = new THREE.Mesh(geo, mat);
+    arrow.rotation.z = Math.PI; // point down
+    arrow.position.y = 2.7;
+    arrow.renderOrder = 998;
+    this.object3d.add(arrow);
+    this.youArrow = arrow;
+    this.disposables.push(geo, mat);
   }
 
   setTarget(x: number, y: number, z: number, yaw: number): void {
@@ -90,6 +109,10 @@ export class Avatar {
     if (this.hasTarget) {
       this.object3d.position.lerp(this.targetPos, POS_LERP);
       this.object3d.rotation.y = lerpAngle(this.object3d.rotation.y, this.targetYaw, YAW_LERP);
+    }
+    if (this.youArrow) {
+      this.bob += dt * 4;
+      this.youArrow.position.y = 2.7 + Math.sin(this.bob) * 0.12;
     }
     this.mixer?.update(dt);
   }
@@ -161,6 +184,31 @@ export class Avatar {
     this.disposables.push(geo, mat);
   }
 
+  /** Soft dark blob under the feet so the character reads as sitting on the ground. */
+  private addContactShadow(): void {
+    const tex = makeRadialTexture("rgba(0,0,0,0.5)");
+    const geo = new THREE.PlaneGeometry(1.5, 1.5);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.55,
+    });
+    const blob = new THREE.Mesh(geo, mat);
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.y = 0.02;
+    this.object3d.add(blob);
+    this.disposables.push(geo, mat, tex);
+  }
+
+  /** A floating name tag above the head (always faces the camera). */
+  private addNameTag(name: string, color: number): void {
+    const sprite = makeNameSprite(name, color);
+    sprite.position.y = 2.05;
+    this.object3d.add(sprite);
+    this.disposables.push(sprite.material, sprite.material.map as THREE.Texture);
+  }
+
   private buildFallback(color: number): void {
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
     const bodyGeo = new THREE.CapsuleGeometry(0.3, 0.7, 6, 16);
@@ -182,6 +230,50 @@ export class Avatar {
     const lower = target.toLowerCase();
     return this.clips.find((c) => c.name.toLowerCase().includes(lower)) ?? null;
   }
+}
+
+/** A soft radial gradient texture (used for the contact shadow blob). */
+function makeRadialTexture(inner: string): THREE.CanvasTexture {
+  const S = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext("2d")!;
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0, inner);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  return new THREE.CanvasTexture(canvas);
+}
+
+/** A camera-facing name tag sprite (colored pill + the player's name). */
+function makeNameSprite(name: string, color: number): THREE.Sprite {
+  const W = 256;
+  const H = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "rgba(8,16,12,0.72)";
+  roundRect(ctx, 6, 12, W - 12, 40, 20);
+  ctx.fill();
+  const hex = `#${color.toString(16).padStart(6, "0")}`;
+  ctx.fillStyle = hex;
+  roundRect(ctx, 6, 12, 10, 40, 5);
+  ctx.fill();
+  ctx.fillStyle = "#eaf6ee";
+  ctx.font = "bold 30px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(name.slice(0, 12), W / 2 + 4, 33);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.7, 0.42, 1);
+  sprite.renderOrder = 997;
+  return sprite;
 }
 
 /** Build a camera-facing speech-bubble sprite for a short emote word. */

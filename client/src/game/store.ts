@@ -37,6 +37,8 @@ export interface GameState {
   readonly localAlive: boolean;
   readonly localPlacement: number;
   readonly localCombo: number;
+  // Transient "+N" score popup (key changes each time to retrigger the animation).
+  readonly scorePop: { amount: number; key: number };
   readonly isLocalWinner: boolean;
   readonly winnerName: string;
   // Room code for private games (shown in the lobby so the host can share it).
@@ -60,6 +62,7 @@ const INITIAL: GameState = {
   localAlive: true,
   localPlacement: 0,
   localCombo: 0,
+  scorePop: { amount: 0, key: 0 },
   isLocalWinner: false,
   winnerName: "",
   roomCode: "",

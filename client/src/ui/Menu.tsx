@@ -33,7 +33,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
     <div className="screen menu-screen">
       <WalletPanel />
       <div className="menu-hero">
-        <h1 className="game-title">Party Royale</h1>
+        <h1 className="game-title">PumpRoyale</h1>
         <p className="game-sub">4 players. 4 minigames. Highest points wins.</p>
 
         <div className="name-row">

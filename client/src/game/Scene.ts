@@ -36,14 +36,16 @@ export function createScene(): BuiltScene {
   scene.add(ground);
 
   // Soft "clay" lighting: gentle sky/ground fill + one soft key + low ambient lift.
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xb9d0c0, 0.7);
+  // Slightly stronger key + lower fill gives readable directional shadows (the
+  // characters' contact-shadow blobs do the rest of the grounding).
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xb9d0c0, 0.62);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xfff4e6, 1.2);
-  key.position.set(8, 16, 6);
+  const key = new THREE.DirectionalLight(0xfff4e6, 1.5);
+  key.position.set(9, 17, 7);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.radius = 8;
+  key.shadow.radius = 7;
   key.shadow.blurSamples = 16;
   key.shadow.bias = -0.0005;
   key.shadow.camera.near = 1;
@@ -54,7 +56,7 @@ export function createScene(): BuiltScene {
   key.shadow.camera.bottom = -26;
   scene.add(key);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.16));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.12));
 
   const size = ARENA.platformHalf * 2;
   const platform = new THREE.Mesh(

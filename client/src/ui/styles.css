@@ -1,10 +1,11 @@
 :root {
-  --bg: #10131a;
-  --panel: rgba(18, 22, 30, 0.72);
-  --border: rgba(120, 140, 180, 0.25);
-  --text: #e6ecf5;
-  --muted: #9aa6bd;
-  --accent: #6fb1ff;
+  --bg: #0b1410;
+  --panel: rgba(14, 26, 20, 0.74);
+  --border: rgba(120, 200, 160, 0.28);
+  --text: #eaf6ee;
+  --muted: #97b6a6;
+  --accent: #21d07a;
+  --accent-2: #3df089;
   --warn-bg: rgba(255, 196, 84, 0.14);
   --warn-border: rgba(255, 196, 84, 0.5);
   --warn-text: #ffd98a;
@@ -47,9 +48,9 @@ body,
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(1200px 600px at 50% -10%, rgba(111, 177, 255, 0.18), transparent 60%),
-    radial-gradient(900px 500px at 80% 110%, rgba(185, 140, 255, 0.16), transparent 60%),
-    linear-gradient(180deg, #0d1018 0%, #10131a 100%);
+    radial-gradient(1200px 600px at 50% -10%, rgba(33, 208, 122, 0.2), transparent 60%),
+    radial-gradient(900px 500px at 80% 110%, rgba(61, 240, 137, 0.14), transparent 60%),
+    linear-gradient(180deg, #0a130e 0%, #0b1410 100%);
 }
 
 .menu-hero {
@@ -65,11 +66,11 @@ body,
   font-size: 72px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  background: linear-gradient(180deg, #ffffff, #9cc4ff);
+  background: linear-gradient(180deg, #ffffff, #3df089);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  text-shadow: 0 8px 40px rgba(111, 177, 255, 0.25);
+  text-shadow: 0 8px 40px rgba(33, 208, 122, 0.3);
 }
 
 .game-sub {
@@ -97,9 +98,9 @@ body,
 }
 
 .btn-primary {
-  background: linear-gradient(180deg, #7cb8ff, #4a90ff);
-  color: #07142b;
-  box-shadow: 0 8px 24px rgba(74, 144, 255, 0.35);
+  background: linear-gradient(180deg, #3df089, #16b866);
+  color: #042116;
+  box-shadow: 0 8px 24px rgba(33, 208, 122, 0.35);
 }
 
 .btn-secondary {
@@ -498,7 +499,7 @@ body,
   font-size: 40px;
   font-weight: 800;
   color: var(--accent);
-  text-shadow: 0 2px 20px rgba(111, 177, 255, 0.4);
+  text-shadow: 0 2px 20px rgba(33, 208, 122, 0.45);
 }
 
 .hud-warn-bottom {
@@ -589,10 +590,10 @@ body,
 
 .game-title {
   font-size: 84px;
-  background: linear-gradient(180deg, #ffffff 0%, #ffe6f3 40%, #9cd7ff 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #c8f7dd 40%, #21d07a 100%);
   -webkit-background-clip: text;
   background-clip: text;
-  text-shadow: 0 10px 50px rgba(87, 193, 255, 0.4);
+  text-shadow: 0 10px 50px rgba(33, 208, 122, 0.45);
 }
 
 .btn-primary,
@@ -608,11 +609,11 @@ body,
 }
 
 .btn-primary {
-  background: linear-gradient(180deg, #7fe0ff 0%, #3aa0ff 60%, #2b7ff0 100%);
-  color: #06204a;
+  background: linear-gradient(180deg, #4cf093 0%, #1fc873 60%, #14a85f 100%);
+  color: #042116;
   box-shadow:
-    0 6px 0 #1c5cc0,
-    0 12px 26px rgba(58, 160, 255, 0.4);
+    0 6px 0 #0f7a45,
+    0 12px 26px rgba(33, 208, 122, 0.4);
 }
 .btn-primary:hover {
   filter: brightness(1.06);
@@ -621,13 +622,13 @@ body,
 .btn-primary:active {
   transform: translateY(3px);
   box-shadow:
-    0 3px 0 #1c5cc0,
-    0 6px 14px rgba(58, 160, 255, 0.35);
+    0 3px 0 #0f7a45,
+    0 6px 14px rgba(33, 208, 122, 0.35);
 }
 .btn-primary:disabled {
   filter: grayscale(0.6) brightness(0.8);
   cursor: not-allowed;
-  box-shadow: 0 4px 0 #33415f;
+  box-shadow: 0 4px 0 #2a3b33;
 }
 
 /* Name entry */
@@ -972,8 +973,8 @@ body,
     filter 0.1s ease;
 }
 .wallet-signin {
-  background: linear-gradient(180deg, #7fe0ff, #3aa0ff);
-  color: #06204a;
+  background: linear-gradient(180deg, #4cf093, #1fc873);
+  color: #042116;
 }
 .wallet-signin:hover {
   transform: translateY(-1px);
@@ -1041,6 +1042,39 @@ body,
 }
 .hud-mute:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* Floating "+N" score popup. */
+.score-pop {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translateX(-50%);
+  font-family: "Kenney Future", system-ui, sans-serif;
+  font-size: 34px;
+  font-weight: 800;
+  color: #3df089;
+  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 12;
+  animation: score-pop-rise 0.9s ease-out forwards;
+}
+.score-pop.neg {
+  color: #ff6a6a;
+}
+@keyframes score-pop-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px) scale(0.7);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -60px) scale(1);
+  }
 }
 
 /* Shooting crosshair (center screen) + combo badge. */

@@ -95,6 +95,7 @@ export class Game {
   private matchPhase = "";
   private currentMinigame = "";
   private localRoundScore = 0;
+  private scorePopKey = 0;
 
   private disposed = false;
   private seq = 0;
@@ -198,14 +199,20 @@ export class Game {
     const $ = getStateCallbacks(room);
 
     $(room.state).players?.onAdd((player: NetPlayer, sessionId: string) => {
-      const avatar = new Avatar(player.character, teamColor(player.colorIndex));
+      const isLocal = sessionId === this.localId;
+      const avatar = new Avatar(
+        player.character,
+        teamColor(player.colorIndex),
+        isLocal ? `${player.name} (you)` : player.name,
+      );
       avatar.setTarget(player.x, player.y, player.z, player.yaw);
       avatar.setAnim(asAnim(player.anim));
+      if (isLocal) avatar.setLocal();
       this.scene.add(avatar.object3d);
       this.avatars.set(sessionId, avatar);
       gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
 
-      if (sessionId === this.localId && !this.cameraSnapped) {
+      if (isLocal && !this.cameraSnapped) {
         this.cameraRig.snapTo(avatar.position);
         this.cameraSnapped = true;
       }
@@ -242,8 +249,11 @@ export class Game {
           avatar.setRingColor(ringColorFor(player.team, player.colorIndex));
         }
         if (sessionId === this.localId) {
-          if (player.roundScore > this.localRoundScore && /gem/i.test(this.currentMinigame)) {
-            sound.play("pickup");
+          const delta = player.roundScore - this.localRoundScore;
+          if (delta > 0 && /gem/i.test(this.currentMinigame)) sound.play("pickup");
+          if (delta !== 0 && this.matchPhase === "playing") {
+            this.scorePopKey += 1;
+            gameStore.set({ scorePop: { amount: delta, key: this.scorePopKey } });
           }
           this.localRoundScore = player.roundScore;
           gameStore.set({ localPlacement: player.placement, localCombo: player.combo });
