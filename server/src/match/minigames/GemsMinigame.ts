@@ -37,7 +37,7 @@ const COMBO_WINDOW = 2.5;
 export class GemsMinigame implements IMinigame {
   readonly id = "gems";
   readonly name = "Gem Rush";
-  readonly maxDuration = 45;
+  readonly maxDuration = 15;
 
   private map: MinigameMap = gemsMap();
   private colliders: RAPIER.Collider[] = [];

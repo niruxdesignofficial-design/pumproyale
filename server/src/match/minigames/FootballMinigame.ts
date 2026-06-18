@@ -33,7 +33,7 @@ function ownGoalZ(team: number): number {
 export class FootballMinigame implements IMinigame {
   readonly id = "football";
   readonly name = "Soccer Scramble";
-  readonly maxDuration = 35;
+  readonly maxDuration = 15;
 
   private map: MinigameMap = footballMap();
   private colliders: RAPIER.Collider[] = [];

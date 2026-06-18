@@ -32,7 +32,7 @@ interface Climber {
 export class ClimbMinigame implements IMinigame {
   readonly id = "climb";
   readonly name = "Tower Climb";
-  readonly maxDuration = 70;
+  readonly maxDuration = 15;
 
   private map: MinigameMap = climbMap();
   private colliders: RAPIER.Collider[] = [];

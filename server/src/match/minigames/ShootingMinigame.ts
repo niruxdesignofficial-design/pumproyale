@@ -52,7 +52,7 @@ interface ComboState {
 export class ShootingMinigame implements IMinigame {
   readonly id = "shooting";
   readonly name = "Target Range";
-  readonly maxDuration = 40;
+  readonly maxDuration = 15;
 
   private map: MinigameMap = shootingMap();
   private colliders: RAPIER.Collider[] = [];
