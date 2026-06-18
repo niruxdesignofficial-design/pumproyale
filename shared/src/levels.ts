@@ -423,9 +423,10 @@ export interface ClimbStep {
   d: number;
 }
 
-/** Base + fork (both routes start here). */
+/** Base + fork (both routes start here). The fork is only a low step above the base
+ * so climbers (and bots) ease onto it before the real route begins. */
 const CLIMB_BASE: ClimbStep = { x: 0, y: 0, z: -9, w: 10, d: 4 };
-const CLIMB_FORK: ClimbStep = { x: 0, y: 1, z: -5.5, w: 10, d: 3 };
+const CLIMB_FORK: ClimbStep = { x: 0, y: 0.5, z: -5.5, w: 10, d: 3 };
 
 /**
  * EASY route (blue, the LONG one): a long weaving jump course on the left — many
@@ -466,8 +467,9 @@ export const CLIMB_HARD: ClimbStep[] = [
   { x: 4, y: 7.8, z: 16.0, w: 5, d: 3.4 },
 ];
 
-/** The raised WIN platform: climb onto it to win the round. Both routes hop up. */
-const CLIMB_SUMMIT: ClimbStep = { x: 0, y: 9.5, z: 18, w: 8, d: 6 };
+/** The raised WIN platform: climb onto it to win the round. Both routes hop up.
+ * Kept only slightly above the top route platforms so the final hop is reliable. */
+const CLIMB_SUMMIT: ClimbStep = { x: 0, y: 8.6, z: 18, w: 8, d: 6 };
 
 /** Y a climber must reach (summit top) to finish the round. */
 export const CLIMB_FINISH_Y = CLIMB_SUMMIT.y;

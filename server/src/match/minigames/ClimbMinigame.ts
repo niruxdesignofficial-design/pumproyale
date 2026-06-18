@@ -153,18 +153,23 @@ export class ClimbMinigame implements IMinigame {
     const p = sim.position;
     const route = ctx.botIndex(id) % 2 === 0 ? CLIMB_ROUTES.easy : CLIMB_ROUTES.hard;
 
-    // Advance the progress index when close to the current waypoint.
+    // Advance the progress index once we're on/above a waypoint's level and roughly
+    // over it. Generous thresholds so a bot commits forward and never gets tugged
+    // back toward the previous waypoint (which caused stalls at the base step).
     let idx = this.botProgress.get(id) ?? 0;
     const cur = route[Math.min(idx, route.length - 1)]!;
-    const near = Math.hypot(p.x - cur.x, p.z - cur.z) < 1.8 && p.y >= cur.y - 0.6;
+    const near = Math.hypot(p.x - cur.x, p.z - cur.z) < 2.6 && p.y >= cur.y - 0.8;
     if (near && idx < route.length - 1) {
       idx += 1;
       this.botProgress.set(id, idx);
     }
     const target = route[Math.min(idx, route.length - 1)]!;
 
-    // Hop sweeper bars / launched balls that are right on top of us.
-    let jump = false;
+    // Hop continuously toward the next waypoint while climbing — every platform is a
+    // step up and/or a gap, so a rhythmic full-speed hop (gated to grounded+cooldown
+    // by the controller, with a clean takeoff toward the waypoint) clears them.
+    const gap = Math.hypot(target.x - p.x, target.z - p.z);
+    let jump = target.y > p.y - 0.4 || gap > 1.3;
     const t = this.elapsed;
     for (const s of this.map.sweepers ?? []) {
       if (p.y > s.y + 1.0) continue;

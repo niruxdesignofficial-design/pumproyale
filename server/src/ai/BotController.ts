@@ -5,12 +5,15 @@ import type { BotPlan } from "../match/IMinigame";
 
 /** Global difficulty knobs for bots. */
 const BOT_SKILL = {
-  /** Lower = better aim/steering (wander amplitude). */
-  wander: 0.5,
-  /** How far ahead (m) to probe for a gap/edge before jumping. */
-  look: 1.6,
-  /** Min seconds between voluntary jumps. */
-  jumpCooldown: 0.45,
+  /** Lower = better aim/steering (wander amplitude). Kept modest so bots stay on
+   * narrow parkour platforms instead of wandering off the edge. */
+  wander: 0.34,
+  /** How far ahead (m) to probe for the next step of ground (gap detection). */
+  look: 1.2,
+  /** Max horizontal gap (m) a bot will commit to jumping (within the jump arc). */
+  maxJump: 5.0,
+  /** Min seconds between voluntary jumps (snappy enough to hop up steps in rhythm). */
+  jumpCooldown: 0.38,
 } as const;
 
 /**
@@ -67,8 +70,9 @@ export class BotController {
     nx += Math.cos(this.phase) * wander;
     nz += Math.sin(this.phase * 1.3) * wander;
 
-    // Human turning: ease the heading toward the target instead of snapping.
-    const turn = 0.16 + this.skill * 0.16;
+    // Ease the heading toward the target (smooth, not snappy) — but quick enough
+    // that bots reach full speed with runway before a step/gap, not at the wall.
+    const turn = 0.32 + this.skill * 0.16;
     this.headX += (nx - this.headX) * turn;
     this.headZ += (nz - this.headZ) * turn;
     nx = this.headX;
@@ -91,33 +95,70 @@ export class BotController {
     this.lastX = p.x;
     this.lastZ = p.z;
 
+    // Pure direction to the next waypoint (no wander) — used for gap probing and
+    // for a clean, full-speed takeoff so the jump actually carries across the gap.
+    const tdx = dist > 0.1 ? dx / dist : this.headX;
+    const tdz = dist > 0.1 ? dz / dist : this.headZ;
+
     if (this.jumpCd > 0) this.jumpCd -= dt;
     let jump = false;
 
     if (paused) {
       // hesitating: don't jump/act this moment
     } else if (plan.jump) {
-      jump = true;
-    } else if (sim.isGrounded && this.jumpCd <= 0 && !plan.hold && (nx !== 0 || nz !== 0)) {
-      // Probe for ground a step ahead (origin raised so step-ups still read as ground).
-      const ahead = physics.groundBelow(p.x + nx * BOT_SKILL.look, p.y + 2.0, p.z + nz * BOT_SKILL.look, 3.5);
-      if (ahead === null) {
-        // Gap ahead: jump only if a landing exists a bit further on.
-        const landing = physics.groundBelow(p.x + nx * 3.2, p.y + 2.0, p.z + nz * 3.2, 4.0);
-        if (landing !== null && dist > 1.0) {
-          jump = true;
-        } else {
-          // Bottomless cliff with no landing: ease off the edge.
-          nx *= -0.2;
-          nz *= -0.2;
-        }
+      // Commanded jump (climb hop / hazard dodge): fire only when grounded and off
+      // cooldown so it auto-repeats on landing as a rhythmic hop, taking off at full
+      // speed straight at the waypoint so the jump carries up/over.
+      if (sim.isGrounded && this.jumpCd <= 0) {
+        jump = true;
+        nx = tdx;
+        nz = tdz;
       }
-      // Blocked while trying to move (a step-up or a wall): jump to climb it.
-      if (!jump) {
+    } else if (sim.isGrounded && this.jumpCd <= 0 && !plan.hold && dist > 1.0) {
+      // Ground-probe toward the waypoint: a gap is the ABSENCE of floor ahead; a
+      // step-up is floor ahead that's HIGHER than here. Both need a jump, taken off
+      // ~look metres BEFORE the edge/step so forward momentum carries up and over.
+      const originY = p.y + 2.0;
+      const hereToi = physics.groundBelow(p.x, originY, p.z, 4.0);
+      const aheadToi = physics.groundBelow(
+        p.x + tdx * BOT_SKILL.look,
+        originY,
+        p.z + tdz * BOT_SKILL.look,
+        5.0,
+      );
+      if (aheadToi === null) {
+        // Gap toward the waypoint: scan for the nearest landing within jump range.
+        let landing = 0;
+        for (let d = 2.0; d <= BOT_SKILL.maxJump; d += 0.5) {
+          if (physics.groundBelow(p.x + tdx * d, originY, p.z + tdz * d, 5.5) !== null) {
+            landing = d;
+            break;
+          }
+        }
+        if (landing > 0) {
+          jump = true;
+          nx = tdx;
+          nz = tdz;
+          this.stuck = 0;
+        } else {
+          // No reachable ground ahead (dead end) — ease back so we never walk off.
+          nx = -tdx * 0.25;
+          nz = -tdz * 0.25;
+        }
+      } else if (hereToi !== null && hereToi - aheadToi > 0.5) {
+        // Step-up ahead (ground ~0.5m+ higher): jump now, full speed at the step.
+        jump = true;
+        nx = tdx;
+        nz = tdz;
+        this.stuck = 0;
+      } else {
+        // Blocked against a wall while moving (no height info): hop to climb it.
         if (sim.planarSpeed < 1.0 && moved < 0.04) this.stuck += dt;
         else this.stuck = Math.max(0, this.stuck - dt * 1.5);
-        if (this.stuck > 0.22) {
+        if (this.stuck > 0.2) {
           jump = true;
+          nx = tdx;
+          nz = tdz;
           this.stuck = 0;
         }
       }
