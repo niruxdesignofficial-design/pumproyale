@@ -152,3 +152,4 @@ assets-source/  Raw CC0 packs you drop in (gitignored)
   map and prop (tiles, goals, balls, targets, gems, barriers, decor) is a
   self-contained `.glb` from the **KayKit Mini-Game Variety Pack**, copied into
   `client/public/assets/variety/` and placed by `client/src/game/VarietyProps.ts`.
+# pumproyale
