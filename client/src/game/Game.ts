@@ -40,7 +40,7 @@ interface MatchStateView {
   minigame: string;
   roundClock: number;
   entities: ArrayLike<NetEntity>;
-  tiles: ArrayLike<boolean>;
+  tiles: ArrayLike<number>;
 }
 
 /** Minimal shape of a synced player, for reading authoritative state. */

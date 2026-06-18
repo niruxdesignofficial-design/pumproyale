@@ -5,6 +5,7 @@ import {
   GEMS,
   crumbleTiles,
   gemsMap,
+  rollGemType,
   type MinigameMap,
 } from "@party-royale/shared";
 import type { BotPlan, IMinigame, MinigameContext } from "../IMinigame";
@@ -18,7 +19,14 @@ interface Gem {
   hidden: number;
 }
 
+interface ComboState {
+  streak: number;
+  timer: number;
+}
+
 const GEM_Y = 0.7;
+/** Consecutive pickups within this window keep the combo streak alive. */
+const COMBO_WINDOW = 2.5;
 
 /**
  * Gem rush on a crumbling floor. The floor is a grid of tiles that drop a beat
@@ -38,11 +46,13 @@ export class GemsMinigame implements IMinigame {
   private tileTimers: number[] = [];
   private gems: Gem[] = [];
   private readonly out = new Set<string>();
+  private readonly combos = new Map<string, ComboState>();
   private elapsed = 0;
 
   setup(ctx: MinigameContext): void {
     this.elapsed = 0;
     this.out.clear();
+    this.combos.clear();
     this.map = gemsMap();
     ctx.state.minigame = this.name;
     ctx.setPlatformEnabled(false);
@@ -63,12 +73,12 @@ export class GemsMinigame implements IMinigame {
     );
     this.tileTimers = this.positions.map(() => Infinity);
     ctx.state.tiles.clear();
-    for (let i = 0; i < this.positions.length; i++) ctx.state.tiles.push(true);
+    for (let i = 0; i < this.positions.length; i++) ctx.state.tiles.push(0); // 0 = solid
 
-    // Gems on random live tiles.
+    // Gems on random live tiles (weighted type; gold is rare and worth the most).
     this.gems = [];
     for (let i = 0; i < GEMS.count; i++) {
-      const entity = ctx.addEntity("gem", i % GEMS.variants.length);
+      const entity = ctx.addEntity("gem", rollGemType());
       const gem: Gem = { entity, tile: -1, hidden: 0 };
       this.placeGem(gem);
       this.gems.push(gem);
@@ -77,7 +87,11 @@ export class GemsMinigame implements IMinigame {
     const ids = ctx.players();
     this.map.spawns.forEach((s, i) => {
       const id = ids[i];
-      if (id) ctx.sims.get(id)?.respawn(s);
+      if (!id) return;
+      ctx.sims.get(id)?.respawn(s);
+      this.combos.set(id, { streak: 0, timer: 0 });
+      const p = ctx.state.players.get(id);
+      if (p) p.combo = 0;
     });
   }
 
@@ -96,7 +110,22 @@ export class GemsMinigame implements IMinigame {
       }
       if (p.y < 1.3) {
         const i = this.tileUnder(p.x, p.z);
-        if (i >= 0 && this.tileTimers[i] === Infinity) this.tileTimers[i] = CRUMBLE.removeDelay;
+        if (i >= 0 && this.tileTimers[i] === Infinity) {
+          this.tileTimers[i] = CRUMBLE.removeDelay;
+          ctx.state.tiles[i] = 1; // warning: telegraph the drop on the client
+        }
+      }
+    }
+
+    // Decay combo windows (a gap between pickups breaks the streak).
+    for (const [id, c] of this.combos) {
+      if (c.streak > 0) {
+        c.timer -= dt;
+        if (c.timer <= 0) {
+          c.streak = 0;
+          const p = ctx.state.players.get(id);
+          if (p) p.combo = 0;
+        }
       }
     }
 
@@ -109,7 +138,7 @@ export class GemsMinigame implements IMinigame {
       if (next <= 0) {
         ctx.physics.world.removeCollider(this.tileColliders[i]!, false);
         this.tileColliders[i] = null;
-        ctx.state.tiles[i] = false;
+        ctx.state.tiles[i] = 2; // gone
       }
     }
 
@@ -130,13 +159,26 @@ export class GemsMinigame implements IMinigame {
         if (!sim) continue;
         const pp = sim.position;
         if (Math.hypot(gem.entity.x - pp.x, gem.entity.z - pp.z) <= GEMS.pickupR) {
-          ctx.addScore(id, 1);
-          gem.entity.active = false;
-          gem.hidden = GEMS.respawn;
+          this.collect(ctx, id, gem);
           break;
         }
       }
     }
+  }
+
+  /** Collect a gem: award its value plus a combo bonus and start its respawn. */
+  private collect(ctx: MinigameContext, id: string, gem: Gem): void {
+    const value = GEMS.types[gem.entity.variant]?.value ?? 1;
+    const c = this.combos.get(id) ?? { streak: 0, timer: 0 };
+    c.streak += 1;
+    c.timer = COMBO_WINDOW;
+    this.combos.set(id, c);
+    const bonus = Math.min(3, Math.floor(c.streak / 4)); // capped so leaders can't snowball
+    ctx.addScore(id, value + bonus);
+    const p = ctx.state.players.get(id);
+    if (p) p.combo = c.streak;
+    gem.entity.active = false;
+    gem.hidden = GEMS.respawn;
   }
 
   /** Move a gem onto a random live tile (or hide it if the floor is gone). */
@@ -153,6 +195,7 @@ export class GemsMinigame implements IMinigame {
     const i = live[Math.floor(Math.random() * live.length)]!;
     const pos = this.positions[i]!;
     gem.tile = i;
+    gem.entity.variant = rollGemType(); // a fresh type each time it reappears
     gem.entity.x = pos.x + (Math.random() - 0.5) * 1.2;
     gem.entity.y = GEM_Y;
     gem.entity.z = pos.z + (Math.random() - 0.5) * 1.2;
@@ -191,6 +234,11 @@ export class GemsMinigame implements IMinigame {
     this.tileTimers = [];
     this.gems = [];
     this.out.clear();
+    for (const id of ctx.players()) {
+      const p = ctx.state.players.get(id);
+      if (p) p.combo = 0;
+    }
+    this.combos.clear();
     ctx.state.tiles.clear();
     ctx.setPlatformEnabled(true);
   }

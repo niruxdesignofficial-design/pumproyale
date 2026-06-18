@@ -639,9 +639,28 @@ export const GEMS = {
   pickupR: 1.1,
   /** Seconds before a collected gem reappears on another live tile. */
   respawn: 1.3,
-  /** Gem visual variants (Variety pickups). */
-  variants: ["diamond_teamBlue", "heart_teamRed", "star"] as const,
+  /** Gem types (index = EntityState.variant): a model + its point value. The last
+   * is a rare "gold" gem (a gold-tinted, enlarged star) worth the most. */
+  types: [
+    { model: "heart_teamRed", value: 1 },
+    { model: "diamond_teamBlue", value: 2 },
+    { model: "star", value: 3 },
+    { model: "star", value: 5 },
+  ] as { model: string; value: number }[],
+  /** Spawn weights per type (gold is rare). */
+  weights: [0.4, 0.34, 0.18, 0.08],
 } as const;
+
+/** Pick a weighted random gem type index. */
+export function rollGemType(): number {
+  const w = GEMS.weights;
+  let r = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < w.length; i++) {
+    r -= w[i]!;
+    if (r <= 0) return i;
+  }
+  return 0;
+}
 
 /** The crumbling-floor grid: tiles drop a beat after a player stands on them. */
 export const CRUMBLE = {
@@ -796,6 +815,6 @@ export function allMapProps(): string[] {
   set.add("ball_teamRed");
   set.add("target");
   set.add("targetStand");
-  for (const v of GEMS.variants) set.add(v);
+  for (const t of GEMS.types) set.add(t.model);
   return [...set];
 }

@@ -45,6 +45,7 @@ export class MinigameViews {
   private launchers: { mesh: THREE.Object3D; def: MapLauncher }[] = [];
   private tileMeshes: (THREE.Object3D | null)[] = [];
   private falling: boolean[] = [];
+  private warned: boolean[] = [];
 
   constructor(
     scene: THREE.Scene,
@@ -67,6 +68,7 @@ export class MinigameViews {
     this.launchers = [];
     this.tileMeshes = [];
     this.falling = [];
+    this.warned = [];
 
     const lobby = next === "none";
     this.platform.visible = lobby;
@@ -136,7 +138,7 @@ export class MinigameViews {
     dt: number,
     roundClock: number,
     entities: ArrayLike<NetEntity> | undefined,
-    tiles: ArrayLike<boolean> | undefined,
+    tiles: ArrayLike<number> | undefined,
   ): void {
     if (this.active === "none") return;
 
@@ -155,13 +157,24 @@ export class MinigameViews {
       }
     }
 
-    // Crumbling floor: tiles that flipped to dead fall away (telegraphed).
+    // Crumbling floor (numeric tile state: 0 solid, 1 warning, 2 gone). Tiles in
+    // the warning state get a red overlay (telegraph) before they fall away.
     if (this.active === "gems" && tiles) {
       for (let i = 0; i < this.tileMeshes.length; i++) {
         const mesh = this.tileMeshes[i];
         if (!mesh) continue;
-        const alive = i < tiles.length ? Boolean(tiles[i]) : true;
-        if (!alive && !this.falling[i] && mesh.visible) this.falling[i] = true;
+        const state = i < tiles.length ? Number(tiles[i]) : 0;
+        if (state >= 1 && !this.warned[i]) {
+          this.warned[i] = true;
+          mesh.add(makeWarnOverlay());
+        }
+        if (this.warned[i]) {
+          // Pulse the warning overlay while the tile is doomed.
+          const warn = mesh.children[mesh.children.length - 1] as THREE.Mesh | undefined;
+          const wm = warn?.material as THREE.MeshBasicMaterial | undefined;
+          if (wm) wm.opacity = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(roundClock * 12));
+        }
+        if (state >= 2 && !this.falling[i] && mesh.visible) this.falling[i] = true;
         if (this.falling[i]) {
           mesh.position.y -= dt * 9;
           mesh.rotation.x += dt * 1.6;
@@ -244,10 +257,43 @@ function buildEntity(e: NetEntity): THREE.Object3D | null {
     return g;
   }
   if (e.kind === "gem") {
-    const model = GEMS.variants[e.variant % GEMS.variants.length]!;
-    return makeProp(model, 1.0, "center");
+    const type = GEMS.types[e.variant] ?? GEMS.types[0]!;
+    const gold = e.variant === GEMS.types.length - 1; // last type is the rare gold gem
+    const mesh = makeProp(type.model, gold ? 1.5 : 1.0, "center");
+    if (mesh && gold) tintGold(mesh);
+    return mesh;
   }
   return null;
+}
+
+/** Tint a mesh tree gold (for the rare high-value gem). */
+function tintGold(obj: THREE.Object3D): void {
+  obj.traverse((o) => {
+    const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+    if (m && m.color) {
+      m.color.set(0xffcf3a);
+      if ("emissive" in m) {
+        m.emissive.set(0xffaa00);
+        m.emissiveIntensity = 0.6;
+      }
+    }
+  });
+}
+
+/** A red translucent quad laid over a doomed crumble tile (drop telegraph). */
+function makeWarnOverlay(): THREE.Mesh {
+  const geo = new THREE.PlaneGeometry(CRUMBLE.tileSize * 0.92, CRUMBLE.tileSize * 0.92);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xff4030,
+    transparent: true,
+    opacity: 0.4,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = 0.05;
+  return mesh;
 }
 
 function classify(name: string): Active {

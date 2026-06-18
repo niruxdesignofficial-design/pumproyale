@@ -194,8 +194,8 @@ export class ShootingMinigame implements IMinigame {
       c.streak += 1;
       c.timer = COMBO_WINDOW;
       this.combos.set(id, c);
-      // Every 3rd consecutive hit adds an escalating bonus.
-      const bonus = Math.floor(c.streak / 3);
+      // Every 3rd consecutive hit adds a bonus (capped so it can't snowball).
+      const bonus = Math.min(3, Math.floor(c.streak / 3));
       ctx.addScore(id, value + bonus);
       const p = ctx.state.players.get(id);
       if (p) p.combo = c.streak;
