@@ -676,6 +676,54 @@ body,
   color: #ff6a6a;
 }
 
+/* Official contract address — tap anywhere on it to copy. */
+.ca-badge {
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  max-width: min(620px, 92vw);
+  margin: 2px auto 4px;
+  padding: 9px 16px;
+  border-radius: 12px;
+  background: rgba(8, 20, 14, 0.72);
+  border: 2px solid var(--candy-mint, #5fe0b0);
+  box-shadow: 0 0 0 4px rgba(95, 224, 176, 0.16);
+  transition: transform 0.08s ease, box-shadow 0.15s ease;
+}
+.ca-badge:hover {
+  box-shadow: 0 0 0 4px rgba(95, 224, 176, 0.3);
+}
+.ca-badge:active {
+  transform: scale(0.98);
+}
+.ca-label {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--candy-mint, #5fe0b0);
+}
+.ca-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  word-break: break-all;
+}
+.ca-copy {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #0b1410;
+  background: var(--candy-mint, #5fe0b0);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
 /* Lobby card + course preview minimap */
 .lobby {
   position: absolute;

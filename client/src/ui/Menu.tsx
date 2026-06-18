@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Leaderboard } from "./Leaderboard";
+import { CaBadge } from "./CaBadge";
 import { Online } from "./Hud";
 import { sound } from "../core/Sound";
 import { getPlayerName, isValidPlayerName, setPlayerName } from "../game/name";
@@ -43,6 +44,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
       <div className="menu-hero">
         <h1 className="game-title">Pump Guys</h1>
         <p className="game-sub">4 players. 4 minigames. Highest points wins.</p>
+        <CaBadge />
         <Online />
 
         <div className="name-row">
