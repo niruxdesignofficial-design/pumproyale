@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { WalletPanel } from "./WalletPanel";
 import { Leaderboard } from "./Leaderboard";
+import { PrizeDashboard } from "./PrizeDashboard";
 import { sound } from "../core/Sound";
 import { getPlayerName, isValidPlayerName, setPlayerName } from "../game/name";
 import { setPlayMode } from "../game/matchMode";
@@ -32,6 +33,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
   return (
     <div className="screen menu-screen">
       <WalletPanel />
+      <PrizeDashboard />
       <div className="menu-hero">
         <h1 className="game-title">PumpRoyale</h1>
         <p className="game-sub">4 players. 4 minigames. Highest points wins.</p>

@@ -1150,3 +1150,137 @@ body,
   gap: 10px;
   justify-content: center;
 }
+
+/* --- Hourly prize dashboard (menu, top-right) --- */
+.prize {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 280px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(10, 22, 16, 0.82);
+  border: 1px solid rgba(33, 208, 122, 0.35);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  font-family: "Kenney Future Narrow", system-ui, sans-serif;
+  color: var(--text);
+  z-index: 30;
+}
+.prize-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.prize-title {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.prize-net {
+  font-size: 10px;
+  font-weight: 700;
+  color: #042116;
+  background: var(--accent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  letter-spacing: 0.08em;
+}
+.prize-pool {
+  font-family: "Kenney Future", system-ui, sans-serif;
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--accent-2);
+  line-height: 1.1;
+  margin-top: 4px;
+}
+.prize-pool span {
+  font-size: 16px;
+  color: var(--muted);
+}
+.prize-countdown {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.prize-countdown b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.prize-section {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 10px 0 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+}
+.prize-row,
+.prize-win {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.prize-row.me {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+.prize-rank {
+  width: 16px;
+  color: var(--muted);
+  text-align: right;
+}
+.prize-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prize-proj {
+  color: var(--accent);
+  font-size: 12px;
+}
+.prize-pts {
+  min-width: 28px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.prize-amt {
+  color: var(--accent-2);
+  font-variant-numeric: tabular-nums;
+}
+.prize-tx {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+}
+.prize-pending {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+}
+.prize-you {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--accent-2);
+}
+.prize-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+.prize-note {
+  margin-top: 10px;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.7;
+}
+@media (max-width: 900px) {
+  .prize {
+    display: none;
+  }
+}

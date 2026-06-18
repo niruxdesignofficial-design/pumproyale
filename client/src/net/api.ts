@@ -29,6 +29,21 @@ export async function fetchLeaderboard(limit = 25): Promise<LeaderboardRow[]> {
   return ((await res.json()) as { players: LeaderboardRow[] }).players;
 }
 
+export interface RecentWinner {
+  wallet: string;
+  name: string;
+  amount: number;
+  status: string;
+  txSignature: string | null;
+  createdAt: string;
+}
+
+export async function fetchRecentWinners(limit = 8): Promise<RecentWinner[]> {
+  const res = await fetch(`${API_BASE}/api/rewards/recent?limit=${limit}`);
+  if (!res.ok) throw new Error("Could not load recent winners");
+  return ((await res.json()) as { winners: RecentWinner[] }).winners;
+}
+
 export async function fetchMyRewards(token: string): Promise<{ rewards: RewardRow[]; mode: string }> {
   const res = await fetch(`${API_BASE}/api/rewards/me`, {
     headers: { authorization: `Bearer ${token}` },

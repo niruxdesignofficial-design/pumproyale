@@ -62,3 +62,28 @@ export async function claimReward(wallet: string, rewardId: string): Promise<Cla
     throw err;
   }
 }
+
+export interface RecentWinner {
+  wallet: string;
+  name: string;
+  amount: number;
+  status: string;
+  txSignature: string | null;
+  createdAt: string;
+}
+
+/** Most recent match winners (public) for the prize dashboard's winners feed. */
+export async function getRecentWinners(limit: number): Promise<RecentWinner[]> {
+  const rewards = await prisma.reward.findMany({ orderBy: { createdAt: "desc" }, take: limit });
+  const wallets = [...new Set(rewards.map((r) => r.wallet))];
+  const players = await prisma.player.findMany({ where: { wallet: { in: wallets } } });
+  const nameByWallet = new Map(players.map((p) => [p.wallet, p.name]));
+  return rewards.map((r) => ({
+    wallet: r.wallet,
+    name: nameByWallet.get(r.wallet) ?? "",
+    amount: r.amount,
+    status: r.status,
+    txSignature: r.txSignature,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}

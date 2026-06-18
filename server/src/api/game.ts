@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { verifySessionToken } from "../auth/session";
 import { getLeaderboard } from "../services/leaderboard";
-import { ClaimError, claimReward, listClaimable } from "../services/rewards";
+import { ClaimError, claimReward, getRecentWinners, listClaimable } from "../services/rewards";
 import { treasuryMode } from "../solana/treasury";
 
 /** Resolve the authenticated wallet from a Bearer session token, or null. */
@@ -19,6 +19,13 @@ export function registerGameRoutes(app: FastifyInstance): void {
     const limit = Math.min(100, Math.max(1, Number.isFinite(raw) ? raw : 50));
     const players = await getLeaderboard(limit);
     return reply.send({ players });
+  });
+
+  app.get("/api/rewards/recent", async (request, reply) => {
+    const raw = Number((request.query as Record<string, unknown>)?.limit ?? 8);
+    const limit = Math.min(25, Math.max(1, Number.isFinite(raw) ? raw : 8));
+    const winners = await getRecentWinners(limit);
+    return reply.send({ winners });
   });
 
   app.get("/api/rewards/me", async (request, reply) => {
