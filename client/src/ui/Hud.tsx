@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { MAX_PLAYERS, teamColor } from "@party-royale/shared";
 import type { GameState, Standing } from "../game/store";
 import { sound } from "../core/Sound";
+import { onlineCount } from "../game/online";
 import { LobbyPanel } from "./LobbyPanel";
 import { Confetti } from "./Confetti";
 
@@ -39,12 +40,11 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
   if (state.status === "error") {
     return (
       <Overlay>
-        <div className="hud-error-title">{state.winnerName ? "Match over" : "Connection lost"}</div>
-        <span>{state.error || "Could not reach the game server."}</span>
+        <div className="hud-error-title">{state.winnerName ? "Match over" : "Something went wrong"}</div>
+        <span>{state.error || "Could not start the game."}</span>
         <button className="hud-button" onClick={() => exit(onExit)}>
           Back to menu
         </button>
-        <span className="hud-dim">Make sure the server is running (`pnpm dev`).</span>
       </Overlay>
     );
   }
@@ -53,7 +53,17 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
     return (
       <Overlay>
         <div className="hud-spinner" />
-        <span>Connecting to match...</span>
+        <span>Loading game...</span>
+      </Overlay>
+    );
+  }
+
+  if (state.matchPhase === "matchmaking") {
+    return (
+      <Overlay>
+        <div className="hud-spinner" />
+        <div className="hud-mm-title">Buscando jugadores...</div>
+        <Online />
       </Overlay>
     );
   }
@@ -171,6 +181,21 @@ export function Hud({ state, onExit }: { state: GameState; onExit: () => void })
           WASD move &middot; Shift run &middot; Space jump &middot; E / click action &middot; 1-4 emote
         </div>
       )}
+    </div>
+  );
+}
+
+/** A live-looking "players online" line (cosmetic, drifts over time). */
+export function Online({ compact = false }: { compact?: boolean }) {
+  const [n, setN] = useState(() => onlineCount());
+  useEffect(() => {
+    const t = window.setInterval(() => setN(onlineCount()), 2200);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <div className={compact ? "online online-compact" : "online"}>
+      <span className="online-dot" />
+      {n.toLocaleString()} {compact ? "online" : "jugadores en línea"}
     </div>
   );
 }

@@ -1,13 +1,12 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { getStateCallbacks, type Room } from "colyseus.js";
 import { MAX_PLAYERS, teamColor, type AnimationState, type InputIntent } from "@party-royale/shared";
+import type { MatchState, PlayerState } from "@engine/rooms/schema";
 import { Renderer } from "../core/Renderer";
 import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { sound } from "../core/Sound";
-import { NetClient, defaultServerUrl } from "../net/NetClient";
 import { getAuthWallet } from "../solana/auth";
 import { createScene } from "./Scene";
 import { MinigameViews } from "./MinigameViews";
@@ -15,15 +14,14 @@ import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
 import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
-import { getPlayMode } from "./matchMode";
 import { getPlayerName } from "./name";
+import { LocalGameManager } from "./LocalGameManager";
 import { gameStore, type Standing } from "./store";
 
 const UP = new THREE.Vector3(0, 1, 0);
 const CENTER = new THREE.Vector3(0, 1, 0);
-const SEND_INTERVAL = 1 / 30;
 
-/** Minimal shape of a synced dynamic entity. */
+/** Minimal shape of a synced dynamic entity (for the minigame view layer). */
 interface NetEntity {
   kind: string;
   x: number;
@@ -34,36 +32,6 @@ interface NetEntity {
   variant: number;
 }
 
-/** Minimal shape of synced match state read directly each frame for rendering. */
-interface MatchStateView {
-  phase: string;
-  minigame: string;
-  roundClock: number;
-  entities: ArrayLike<NetEntity>;
-  tiles: ArrayLike<number>;
-}
-
-/** Minimal shape of a synced player, for reading authoritative state. */
-interface NetPlayer {
-  name: string;
-  wallet: string;
-  character: string;
-  colorIndex: number;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  anim: string;
-  alive: boolean;
-  isBot: boolean;
-  placement: number;
-  points: number;
-  roundScore: number;
-  team: number;
-  emote: string;
-  combo: number;
-}
-
 /** Ground-ring color for a player: team color in team rounds, else candy color. */
 function ringColorFor(team: number, colorIndex: number): number {
   if (team === 0) return 0x4aa3ff; // Blue
@@ -72,10 +40,10 @@ function ringColorFor(team: number, colorIndex: number): number {
 }
 
 /**
- * Networked game client. Connects to the authoritative Colyseus match room,
- * renders an Avatar per player interpolated toward server transforms, samples
- * local input and sends it as intents, mirrors match flow + the live scoreboard
- * into the store, and follows the local player.
+ * Offline game client. Runs the full match simulation locally (LocalGameManager —
+ * physics + the four minigames + bot AI in the browser, 1 human + 3 bots), renders
+ * an Avatar per player, samples local input, and mirrors the live state into the
+ * store each frame. No network: there is no server to lose connection to.
  */
 export class Game {
   private readonly renderer: Renderer;
@@ -83,23 +51,33 @@ export class Game {
   private readonly cameraRig: CameraRig;
   private readonly input = new Input();
   private readonly loop: GameLoop;
-  private readonly net = new NetClient();
   private readonly minigameViews: MinigameViews;
+  private local: LocalGameManager | null = null;
+  private readonly localId = "local";
 
   private readonly avatars = new Map<string, Avatar>();
   private readonly tracers: { mesh: THREE.Mesh; ttl: number }[] = [];
   private readonly dust: { mesh: THREE.Mesh; ttl: number; max: number }[] = [];
-  private localId: string | null = null;
+  // Per-player change caches (replace Colyseus onChange) + global flow caches.
+  private readonly cAnim = new Map<string, string>();
+  private readonly cTeam = new Map<string, number>();
+  private readonly cEmote = new Map<string, string>();
   private cameraSnapped = false;
   private standingsSig = "";
   private matchPhase = "";
   private currentMinigame = "";
   private localRoundScore = 0;
   private scorePopKey = 0;
+  private prevTimer = -1;
+  private prevRound = -1;
+  private prevRoundCount = -1;
+  private prevAlive = -1;
+  private prevBanner = "";
+  private prevWinnerId = "";
+  private prevWinnerName = "";
 
   private disposed = false;
   private seq = 0;
-  private sendAccum = 0;
   private fpsAccum = 0;
 
   private readonly forward = new THREE.Vector3();
@@ -109,7 +87,6 @@ export class Game {
     this.renderer = new Renderer(canvas);
     const built = createScene();
     this.scene = built.scene;
-    // Soft, even environment lighting (the KayKit clay sheen + clean GI feel).
     const pmrem = new THREE.PMREMGenerator(this.renderer.instance);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
@@ -124,45 +101,26 @@ export class Game {
     await Promise.all([preloadCharacters(), preloadVarietyProps()]);
     if (this.disposed) return;
 
-    let room: Room;
+    const local = new LocalGameManager({
+      name: getPlayerName() || randomName(),
+      character: getSelectedCharacter(),
+      wallet: getAuthWallet() ?? null,
+    });
     try {
-      const wallet = getAuthWallet() ?? undefined;
-      room = await this.net.connect(
-        defaultServerUrl(),
-        {
-          name: getPlayerName() || randomName(),
-          wallet,
-          character: getSelectedCharacter(),
-        },
-        getPlayMode(),
-      );
+      await local.start();
     } catch (err) {
-      console.error("[net] connection failed", err);
-      const joining = getPlayMode().kind === "join";
-      gameStore.set({
-        status: "error",
-        error: joining
-          ? "Could not find that game. Check the code and try again."
-          : "Could not reach the game server.",
-      });
+      console.error("[local] failed to start", err);
+      gameStore.set({ status: "error", error: "Could not start the game engine." });
       return;
     }
     if (this.disposed) {
-      void this.net.dispose();
+      local.dispose();
       return;
     }
-
-    this.localId = room.sessionId;
-    // Surface the room code for private games so the host can share it.
-    if (getPlayMode().kind === "create") {
-      gameStore.set({ roomCode: this.net.roomCode ?? "" });
-    }
-    this.wireRoom(room);
+    this.local = local;
 
     this.input.attach();
-    // Enable audio on the first user gesture (browsers block it before that).
     window.addEventListener("keydown", this.enableSound, { once: true });
-    // Emotes: keys 1-4 send a quick text bubble above your avatar.
     window.addEventListener("keydown", this.onEmoteKey);
     gameStore.set({ status: "connected", usingFallback: getCharacterGltf("knight") === null });
     this.loop.start();
@@ -175,7 +133,8 @@ export class Game {
     this.input.detach();
     window.removeEventListener("keydown", this.enableSound);
     window.removeEventListener("keydown", this.onEmoteKey);
-    void this.net.dispose();
+    this.local?.dispose();
+    this.local = null;
     for (const t of this.tracers) {
       this.scene.remove(t.mesh);
       t.mesh.geometry.dispose();
@@ -195,154 +154,37 @@ export class Game {
     gameStore.reset();
   }
 
-  private wireRoom(room: Room): void {
-    const $ = getStateCallbacks(room);
-
-    $(room.state).players?.onAdd((player: NetPlayer, sessionId: string) => {
-      const isLocal = sessionId === this.localId;
-      const avatar = new Avatar(
-        player.character,
-        teamColor(player.colorIndex),
-        isLocal ? `${player.name} (you)` : player.name,
-      );
-      avatar.setTarget(player.x, player.y, player.z, player.yaw);
-      avatar.setAnim(asAnim(player.anim));
-      if (isLocal) avatar.setLocal();
-      this.scene.add(avatar.object3d);
-      this.avatars.set(sessionId, avatar);
-      gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
-
-      if (isLocal && !this.cameraSnapped) {
-        this.cameraRig.snapTo(avatar.position);
-        this.cameraSnapped = true;
-      }
-
-      let lastAnim = player.anim;
-      let lastTeam = NaN;
-      let lastEmote = "";
-      $(player).onChange(() => {
-        avatar.setTarget(player.x, player.y, player.z, player.yaw);
-        const anim = asAnim(player.anim);
-        // Cosmetic shot tracer when a player starts the shoot animation. The local
-        // shooter fires along the camera aim (matching the crosshair).
-        if (anim === "shoot" && lastAnim !== "shoot") {
-          const yaw =
-            sessionId === this.localId ? Math.atan2(this.forward.x, this.forward.z) : player.yaw;
-          this.spawnTracer(avatar.position, yaw);
-          if (sessionId === this.localId) sound.play("shoot");
-        }
-        // Dust puff when landing (an airborne anim resolves to grounded movement).
-        const wasAir = lastAnim === "jump" || lastAnim === "fall" || lastAnim === "dive";
-        if (wasAir && (anim === "idle" || anim === "run")) this.spawnDust(avatar.position);
-        // Screen-shake when the local player takes a hit.
-        if (anim === "hit" && lastAnim !== "hit" && sessionId === this.localId) {
-          this.cameraRig.addShake(0.28);
-        }
-        if (player.emote !== lastEmote) {
-          lastEmote = player.emote;
-          avatar.setEmote(player.emote);
-        }
-        lastAnim = player.anim;
-        avatar.setAnim(anim);
-        if (player.team !== lastTeam) {
-          lastTeam = player.team;
-          avatar.setRingColor(ringColorFor(player.team, player.colorIndex));
-        }
-        if (sessionId === this.localId) {
-          const delta = player.roundScore - this.localRoundScore;
-          if (delta > 0 && /gem/i.test(this.currentMinigame)) sound.play("pickup");
-          if (delta !== 0 && this.matchPhase === "playing") {
-            this.scorePopKey += 1;
-            gameStore.set({ scorePop: { amount: delta, key: this.scorePopKey } });
-          }
-          this.localRoundScore = player.roundScore;
-          gameStore.set({ localPlacement: player.placement, localCombo: player.combo });
-        }
-      });
-    });
-
-    $(room.state).players?.onRemove((_player: NetPlayer, sessionId: string) => {
-      const avatar = this.avatars.get(sessionId);
-      if (avatar) {
-        this.scene.remove(avatar.object3d);
-        avatar.dispose();
-        this.avatars.delete(sessionId);
-      }
-      gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
-    });
-
-    const s = $(room.state);
-    s.listen?.("phase", (v: string) => {
-      this.matchPhase = v;
-      gameStore.set({ matchPhase: v });
-      if (v === "playing") sound.play("go");
-    });
-    s.listen?.("round", (v: number) => gameStore.set({ round: v }));
-    s.listen?.("roundCount", (v: number) => gameStore.set({ roundCount: v }));
-    s.listen?.("minigame", (v: string) => {
-      this.currentMinigame = v;
-      gameStore.set({ minigame: v });
-    });
-    s.listen?.("timer", (v: number) => {
-      if (this.matchPhase === "countdown" && v > 0) sound.play("tick");
-      gameStore.set({ timer: v });
-    });
-    s.listen?.("alive", (v: number) => gameStore.set({ alivePlayers: v }));
-    s.listen?.("banner", (v: string) => {
-      if (v && /goal/i.test(v)) {
-        sound.play("goal");
-        this.cameraRig.addShake(0.22);
-      }
-      gameStore.set({ banner: v });
-    });
-    s.listen?.("winnerName", (v: string) => gameStore.set({ winnerName: v }));
-    s.listen?.("winnerId", (v: string) => {
-      const isLocal = v.length > 0 && v === this.localId;
-      gameStore.set({ isLocalWinner: isLocal });
-      if (v.length > 0) {
-        sound.play(isLocal ? "win" : "lose");
-        if (isLocal) this.cameraRig.addShake(0.5);
-      }
-    });
-
-    room.onLeave(() => {
-      if (!this.disposed) gameStore.set({ status: "error", error: "Disconnected from server." });
-    });
-  }
-
   private readonly onFrame = (dt: number): void => {
-    this.sendAccum += dt;
-    if (this.sendAccum >= SEND_INTERVAL && this.net.room) {
-      this.sendAccum = 0;
-      this.net.sendInput(this.sampleInput());
+    const local = this.local;
+    if (local) {
+      local.setLocalInput(this.sampleInput());
+      local.step(dt);
+      this.syncFromState(local.state);
     }
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
 
-    const st = this.net.room?.state as unknown as MatchStateView | undefined;
-    if (st) {
-      // The lobby is a playable parkour while waiting; otherwise show the round map.
+    if (local) {
+      const st = local.state;
       let view = "";
-      if (st.phase === "waiting") view = "lobby";
-      else if ((st.phase === "playing" || st.phase === "intro") && typeof st.minigame === "string") {
-        view = st.minigame;
-      }
+      if (st.phase === "waiting" || st.phase === "matchmaking") view = "lobby";
+      else if ((st.phase === "playing" || st.phase === "intro") && st.minigame) view = st.minigame;
       this.minigameViews.setMinigame(view);
       this.minigameViews.update(
         dt,
-        typeof st.roundClock === "number" ? st.roundClock : 0,
-        st.entities,
-        st.tiles,
+        st.roundClock,
+        st.entities as unknown as ArrayLike<NetEntity>,
+        st.tiles as unknown as ArrayLike<number>,
       );
-      this.publishStandings();
+      this.publishStandings(st);
     }
 
     this.updateTracers(dt);
     this.updateDust(dt);
 
-    const local = this.localId ? this.avatars.get(this.localId) : undefined;
-    if (local) {
-      this.cameraRig.follow(local.position);
+    const localAvatar = this.avatars.get(this.localId);
+    if (localAvatar) {
+      this.cameraRig.follow(localAvatar.position);
       this.cameraRig.update();
     } else {
       this.cameraRig.spectate(CENTER);
@@ -356,15 +198,134 @@ export class Game {
     }
   };
 
-  /** Build the live scoreboard from synced players; only push when it changes. */
-  private publishStandings(): void {
-    const room = this.net.room;
-    if (!room) return;
-    const players = room.state.players as unknown as {
-      forEach(cb: (p: NetPlayer, id: string) => void): void;
-    };
+  /** Diff the local match state each frame to drive avatars, juice, and the store. */
+  private syncFromState(state: MatchState): void {
+    const seen = new Set<string>();
+    state.players.forEach((p: PlayerState, id: string) => {
+      seen.add(id);
+      const isLocal = id === this.localId;
+      let avatar = this.avatars.get(id);
+      if (!avatar) {
+        avatar = new Avatar(p.character, teamColor(p.colorIndex), isLocal ? `${p.name} (you)` : p.name);
+        if (isLocal) avatar.setLocal();
+        avatar.setTarget(p.x, p.y, p.z, p.yaw);
+        this.scene.add(avatar.object3d);
+        this.avatars.set(id, avatar);
+        this.cAnim.set(id, p.anim);
+        this.cTeam.set(id, NaN);
+        this.cEmote.set(id, "");
+        gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
+        if (isLocal && !this.cameraSnapped) {
+          this.cameraRig.snapTo(avatar.position);
+          this.cameraSnapped = true;
+        }
+      }
+      avatar.setTarget(p.x, p.y, p.z, p.yaw);
+
+      const anim = asAnim(p.anim);
+      const lastAnim = this.cAnim.get(id) ?? "idle";
+      if (anim === "shoot" && lastAnim !== "shoot") {
+        const yaw = isLocal ? Math.atan2(this.forward.x, this.forward.z) : p.yaw;
+        this.spawnTracer(avatar.position, yaw);
+        if (isLocal) sound.play("shoot");
+      }
+      const wasAir = lastAnim === "jump" || lastAnim === "fall" || lastAnim === "dive";
+      if (wasAir && (anim === "idle" || anim === "run")) this.spawnDust(avatar.position);
+      if (anim === "hit" && lastAnim !== "hit" && isLocal) this.cameraRig.addShake(0.28);
+      this.cAnim.set(id, p.anim);
+      avatar.setAnim(anim);
+
+      if (p.emote !== this.cEmote.get(id)) {
+        this.cEmote.set(id, p.emote);
+        avatar.setEmote(p.emote);
+      }
+      if (p.team !== this.cTeam.get(id)) {
+        this.cTeam.set(id, p.team);
+        avatar.setRingColor(ringColorFor(p.team, p.colorIndex));
+      }
+
+      if (isLocal) {
+        const delta = p.roundScore - this.localRoundScore;
+        if (delta > 0 && /gem/i.test(this.currentMinigame)) sound.play("pickup");
+        if (delta !== 0 && this.matchPhase === "playing") {
+          this.scorePopKey += 1;
+          gameStore.set({ scorePop: { amount: delta, key: this.scorePopKey } });
+        }
+        this.localRoundScore = p.roundScore;
+        gameStore.set({ localPlacement: p.placement, localCombo: p.combo });
+      }
+    });
+
+    for (const id of [...this.avatars.keys()]) {
+      if (seen.has(id)) continue;
+      const a = this.avatars.get(id)!;
+      this.scene.remove(a.object3d);
+      a.dispose();
+      this.avatars.delete(id);
+      this.cAnim.delete(id);
+      this.cTeam.delete(id);
+      this.cEmote.delete(id);
+      gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
+    }
+
+    this.syncGlobals(state);
+  }
+
+  /** Mirror top-level match flow into the store, firing sounds/shake on change. */
+  private syncGlobals(state: MatchState): void {
+    if (state.phase !== this.matchPhase) {
+      if (state.phase === "playing") sound.play("go");
+      this.matchPhase = state.phase;
+      gameStore.set({ matchPhase: state.phase });
+    }
+    if (state.minigame !== this.currentMinigame) {
+      this.currentMinigame = state.minigame;
+      gameStore.set({ minigame: state.minigame });
+    }
+    if (state.round !== this.prevRound) {
+      this.prevRound = state.round;
+      gameStore.set({ round: state.round });
+    }
+    if (state.roundCount !== this.prevRoundCount) {
+      this.prevRoundCount = state.roundCount;
+      gameStore.set({ roundCount: state.roundCount });
+    }
+    if (state.timer !== this.prevTimer) {
+      if (this.matchPhase === "countdown" && state.timer > 0) sound.play("tick");
+      this.prevTimer = state.timer;
+      gameStore.set({ timer: state.timer });
+    }
+    if (state.alive !== this.prevAlive) {
+      this.prevAlive = state.alive;
+      gameStore.set({ alivePlayers: state.alive });
+    }
+    if (state.banner !== this.prevBanner) {
+      if (state.banner && /goal/i.test(state.banner)) {
+        sound.play("goal");
+        this.cameraRig.addShake(0.22);
+      }
+      this.prevBanner = state.banner;
+      gameStore.set({ banner: state.banner });
+    }
+    if (state.winnerName !== this.prevWinnerName) {
+      this.prevWinnerName = state.winnerName;
+      gameStore.set({ winnerName: state.winnerName });
+    }
+    if (state.winnerId !== this.prevWinnerId) {
+      this.prevWinnerId = state.winnerId;
+      const isLocal = state.winnerId.length > 0 && state.winnerId === this.localId;
+      gameStore.set({ isLocalWinner: isLocal });
+      if (state.winnerId.length > 0) {
+        sound.play(isLocal ? "win" : "lose");
+        if (isLocal) this.cameraRig.addShake(0.5);
+      }
+    }
+  }
+
+  /** Build the live scoreboard from the local state; only push when it changes. */
+  private publishStandings(state: MatchState): void {
     const list: Standing[] = [];
-    players.forEach((p, id) => {
+    state.players.forEach((p: PlayerState, id: string) => {
       list.push({
         id,
         name: p.name,
@@ -445,13 +406,12 @@ export class Game {
   }
 
   private readonly onEmoteKey = (e: KeyboardEvent): void => {
-    // Ignore when typing in an input; only act on the digit row 1-4.
     const tag = (e.target as HTMLElement | null)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     const map: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
     const id = map[e.code];
     if (id === undefined) return;
-    this.net.sendEmote(id);
+    this.local?.sendEmote(id);
   };
 
   private sampleInput(): InputIntent {
@@ -468,7 +428,6 @@ export class Game {
       jump: this.input.isActive("jump"),
       dive: this.input.isActive("dive"),
       action: this.input.isActive("action"),
-      // Aim = camera forward on the ground plane (precise shooting / kicking).
       aimX: this.forward.x,
       aimZ: this.forward.z,
       seq: this.seq++,

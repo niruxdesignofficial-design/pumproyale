@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import {
-  fetchLeaderboard,
-  fetchRecentWinners,
-  lamportsToSol,
-  type LeaderboardRow,
-  type RecentWinner,
-} from "../net/api";
-import { getAuthWallet, truncateWallet } from "../solana/auth";
+  getLocalLeaderboard,
+  getRecentWinners,
+  type LbRow,
+  type WinnerRow,
+} from "../game/localLeaderboard";
+import { truncateWallet } from "../solana/auth";
 
 /** Top-3 split of the hourly pool (50/30/20). */
 const SHARE = [0.5, 0.3, 0.2];
@@ -29,22 +28,24 @@ function fmtCountdown(ms: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function lamportsToSol(lamports: number): string {
+  return (lamports / 1_000_000_000).toFixed(3);
+}
+
 /**
- * Hourly prize dashboard (devnet demo): the live SOL pool, a countdown to the next
+ * Hourly prize dashboard (simulated): the live SOL pool, a countdown to the next
  * :00 payout, this hour's top players + your projected reward, and a recent-winners
- * feed. Bots never appear here (only wallet-holders are recorded server-side). The
- * pool/payouts are simulated for now; real on-chain settlement is a follow-up.
+ * feed. All data is local/simulated; nothing touches a network or a chain.
  */
 export function PrizeDashboard() {
-  const [rows, setRows] = useState<LeaderboardRow[]>([]);
-  const [winners, setWinners] = useState<RecentWinner[]>([]);
+  const [rows, setRows] = useState<LbRow[]>([]);
+  const [winners, setWinners] = useState<WinnerRow[]>([]);
   const [, setTick] = useState(0);
-  const wallet = getAuthWallet();
 
   useEffect(() => {
     const load = () => {
-      void fetchLeaderboard(10).then(setRows).catch(() => {});
-      void fetchRecentWinners(6).then(setWinners).catch(() => {});
+      setRows(getLocalLeaderboard(10));
+      setWinners(getRecentWinners(6));
     };
     load();
     const data = window.setInterval(load, 20000);
@@ -56,7 +57,7 @@ export function PrizeDashboard() {
   }, []);
 
   const pool = simulatedPoolSol();
-  const myIdx = wallet ? rows.findIndex((r) => r.wallet === wallet) : -1;
+  const myIdx = rows.findIndex((r) => r.isYou);
   const myProjected = myIdx >= 0 && myIdx < SHARE.length ? pool * SHARE[myIdx]! : 0;
 
   return (
@@ -77,7 +78,7 @@ export function PrizeDashboard() {
         <div className="prize-empty">No players yet — win a match!</div>
       ) : (
         rows.slice(0, 5).map((r, i) => (
-          <div className={`prize-row${r.wallet === wallet ? " me" : ""}`} key={r.wallet}>
+          <div className={`prize-row${r.isYou ? " me" : ""}`} key={r.wallet}>
             <span className="prize-rank">{i + 1}</span>
             <span className="prize-name">{r.name || truncateWallet(r.wallet)}</span>
             {i < 3 && <span className="prize-proj">~{(pool * SHARE[i]!).toFixed(2)}</span>}
@@ -87,11 +88,9 @@ export function PrizeDashboard() {
       )}
 
       <div className="prize-you">
-        {wallet
-          ? myIdx >= 0
-            ? `You're #${myIdx + 1}${myProjected > 0 ? ` · projected ~${myProjected.toFixed(2)} SOL` : ""}`
-            : "Play a match to enter the board"
-          : "Connect a wallet to compete for the SOL pool"}
+        {myIdx >= 0
+          ? `You're #${myIdx + 1}${myProjected > 0 ? ` · projected ~${myProjected.toFixed(2)} SOL` : ""}`
+          : "Play a match to enter the board"}
       </div>
 
       {winners.length > 0 && (
@@ -101,24 +100,13 @@ export function PrizeDashboard() {
             <div className="prize-win" key={`${w.wallet}-${i}`}>
               <span className="prize-name">{w.name || truncateWallet(w.wallet)}</span>
               <span className="prize-amt">+{lamportsToSol(w.amount)}</span>
-              {w.txSignature ? (
-                <a
-                  className="prize-tx"
-                  href={`https://explorer.solana.com/tx/${w.txSignature}?cluster=devnet`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  tx
-                </a>
-              ) : (
-                <span className="prize-pending">pending</span>
-              )}
+              <span className="prize-pending">SOL</span>
             </div>
           ))}
         </>
       )}
 
-      <div className="prize-note">Pool is a devnet demo · automatic payouts coming soon</div>
+      <div className="prize-note">Simulated pool · for entertainment only</div>
     </div>
   );
 }
