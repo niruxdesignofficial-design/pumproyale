@@ -178,7 +178,7 @@ export class MatchRoom extends Room<MatchState> {
     this.matchClock += dt;
     this.handleEvents();
     this.syncPlayers();
-    this.syncBalls();
+    this.syncEntities();
     this.state.alive = [...this.sim.players.values()].filter((p) => p.alive).length;
 
     if (this.bannerTimer > 0) {
@@ -266,15 +266,13 @@ export class MatchRoom extends Room<MatchState> {
     p.yaw = faceYaw(sp.side);
   }
 
-  private syncBalls(): void {
+  private syncEntities(): void {
     const balls = this.sim.balls;
+    const obs = this.sim.obstacles;
+    const total = balls.length + obs.length;
     const ents = this.state.entities;
-    while (ents.length < balls.length) {
-      const e = new EntityState();
-      e.kind = "ball";
-      ents.push(e);
-    }
-    while (ents.length > balls.length) ents.pop();
+    while (ents.length < total) ents.push(new EntityState());
+    while (ents.length > total) ents.pop();
     for (let i = 0; i < balls.length; i++) {
       const e = ents[i]!;
       e.kind = "ball";
@@ -282,6 +280,17 @@ export class MatchRoom extends Room<MatchState> {
       e.y = BALL_Y;
       e.z = balls[i]!.z;
       e.active = true;
+      e.variant = 0;
+    }
+    for (let j = 0; j < obs.length; j++) {
+      const e = ents[balls.length + j]!;
+      const o = obs[j]!;
+      e.kind = "obstacle";
+      e.x = o.x;
+      e.y = 0.1;
+      e.z = o.z;
+      e.active = true;
+      e.variant = PumpDashSim.isSolid(o) ? 1 : 0;
     }
   }
 

@@ -676,97 +676,249 @@ body,
   color: #ff6a6a;
 }
 
-/* --- PumpDash HUD --- */
-.side-score {
+/* --- PumpDash HUD (cohesive green/white) --- */
+:root {
+  --brand-green: #2fbf6e;
+  --brand-green-hi: #7cf0a8;
+  --card-bg: rgba(12, 22, 18, 0.66);
+  --card-border: rgba(255, 255, 255, 0.14);
+  --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+.hud-card {
   position: absolute;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.hud-topbar {
+  top: 16px;
+  left: 16px;
+  padding: 10px 16px;
+}
+.hud-brand {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+.hud-tag {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.hud-meta {
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+}
+.meta-kv {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 8px 14px;
-  border-radius: 12px;
-  background: rgba(8, 16, 24, 0.62);
-  border: 2px solid rgba(255, 255, 255, 0.16);
+  line-height: 1.1;
+}
+.meta-k {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+.meta-v {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+.hud-mute {
+  pointer-events: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0b1410;
+  background: var(--brand-green-hi);
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+/* Player side cards */
+.pcard {
+  position: absolute;
+  min-width: 104px;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   pointer-events: none;
-  min-width: 96px;
+  transition: opacity 0.3s ease;
 }
 .side-top {
-  top: 18px;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%);
 }
 .side-bottom {
-  bottom: 96px;
+  bottom: 84px;
   left: 50%;
   transform: translateX(-50%);
 }
 .side-left {
-  left: 18px;
+  left: 16px;
   top: 50%;
   transform: translateY(-50%);
 }
 .side-right {
-  right: 18px;
+  right: 16px;
   top: 50%;
   transform: translateY(-50%);
 }
-.side-score.you {
-  border-color: var(--candy-mint, #5fe0b0);
-  box-shadow: 0 0 0 4px rgba(95, 224, 176, 0.18);
+.pcard.you {
+  border-color: var(--brand-green);
+  box-shadow: 0 0 0 2px var(--brand-green), var(--card-shadow);
 }
-.side-score.out {
-  opacity: 0.4;
+.pcard.out {
+  opacity: 0.38;
 }
-.side-score-name {
+.pcard-name {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
 }
-.side-score-pts {
-  font-size: 30px;
+.pcard-you {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #0b1410;
+  background: var(--brand-green-hi);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.pcard-score {
+  font-size: 34px;
   font-weight: 800;
   line-height: 1;
-  color: var(--candy-mint, #5fe0b0);
+  color: var(--brand-green-hi);
 }
-.side-score.out .side-score-pts {
+.pcard.out .pcard-score {
   font-size: 18px;
-  color: #ff6a6a;
+  color: #ff7a86;
 }
-.side-score-wallet {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+.pcard-dash {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.dash-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dash-dot.ready {
+  box-shadow: 0 0 8px var(--brand-green-hi);
+}
+.dash-label {
   font-size: 10px;
-  opacity: 0.6;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
 }
 
-.dash-bar {
+/* Countdown + controls */
+.hud-countdown {
   position: absolute;
-  bottom: 56px;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 96px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+.hud-controls {
+  position: absolute;
+  bottom: 28px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  padding: 7px 16px;
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(6px);
   pointer-events: none;
 }
-.dash-ready {
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  color: #0b1410;
-  background: var(--candy-mint, #5fe0b0);
-  padding: 4px 12px;
-  border-radius: 999px;
-}
-.dash-cool {
-  font-size: 13px;
+.hud-controls kbd {
+  font-family: inherit;
+  font-size: 11px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(8, 16, 24, 0.6);
-  padding: 4px 12px;
-  border-radius: 999px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+.ctrl-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.2);
 }
 
-.hud-place {
-  font-size: 16px;
-  opacity: 0.85;
+/* Overlays (loading / finding / end) */
+.ov-card {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  height: max-content;
+  width: max-content;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 40px;
+  border-radius: 22px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+.ov-title {
+  font-size: 30px;
+  font-weight: 800;
+  color: #fff;
+  text-align: center;
+}
+.ov-sub {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.75);
+  text-align: center;
+}
+.ov-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
 }
 
 .link-btn {

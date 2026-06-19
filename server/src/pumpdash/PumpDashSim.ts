@@ -27,6 +27,24 @@ export const DASH_TIME = 0.16; // dash active window (s)
 export const ENGLISH = 0.35; // how much paddle motion curves the ball
 export const OPEN_ELIMINATED_SIDE = false; // false = eliminated side becomes a wall
 
+// Mini obstacles: appear (telegraph), live, then vanish; the ball bounces off them.
+export const OBST_R = 0.95;
+export const OBST_INTERVAL = 5.5; // seconds between spawn attempts
+export const OBST_TELEGRAPH = 0.9; // warning time before it turns solid
+export const OBST_LIFETIME = 5; // seconds solid
+export const OBST_MAX = 3;
+export const OBST_SPAWN_HALF = ARENA_HALF - 2.6; // keep obstacles inside the playfield
+export const OBST_CLEAR_CENTER = 2.6; // keep the center (ball reset) clear
+
+export interface SimObstacle {
+  x: number;
+  z: number;
+  r: number;
+  age: number;
+  telegraph: number;
+  life: number;
+}
+
 export interface BotSkill {
   react: number; // reaction delay (s) before retargeting
   err: number; // aim error (units)
@@ -108,12 +126,14 @@ export function sideWorld(side: number, t: number): { x: number; z: number } {
 export class PumpDashSim {
   readonly players = new Map<string, SimPlayer>();
   readonly balls: SimBall[] = [];
+  readonly obstacles: SimObstacle[] = [];
   elapsed = 0;
   winnerId: string | null = null;
   ended = false;
   events: SimEvent[] = [];
 
   private concedeBonus = 0;
+  private obstacleTimer = OBST_INTERVAL;
 
   /** Add a player on the first free side (0..3). Returns the assigned side, or -1. */
   addPlayer(id: string, isBot: boolean): number {
@@ -164,8 +184,15 @@ export class PumpDashSim {
   spawnBalls(): void {
     this.balls.length = 0;
     for (let i = 0; i < BALL_COUNT; i++) this.balls.push(this.freshBall());
+    this.obstacles.length = 0;
+    this.obstacleTimer = OBST_INTERVAL;
     this.elapsed = 0;
     this.concedeBonus = 0;
+  }
+
+  /** Is an obstacle solid (past its telegraph window)? */
+  static isSolid(o: SimObstacle): boolean {
+    return o.age >= o.telegraph;
   }
 
   private freshBall(): SimBall {
@@ -204,13 +231,70 @@ export class PumpDashSim {
       p.t = nt;
     }
 
+    this.updateObstacles(dt);
+
     for (const ball of this.balls) {
       ball.x += ball.vx * dt;
       ball.z += ball.vz * dt;
       this.resolveEdges(ball);
+      this.resolveObstacles(ball);
     }
 
     this.checkWin();
+  }
+
+  /** Age obstacles, retire expired ones, and occasionally spawn new ones. */
+  private updateObstacles(dt: number): void {
+    for (let i = this.obstacles.length - 1; i >= 0; i--) {
+      const o = this.obstacles[i]!;
+      o.age += dt;
+      if (o.age >= o.telegraph + o.life) this.obstacles.splice(i, 1);
+    }
+    this.obstacleTimer -= dt;
+    if (this.obstacleTimer <= 0) {
+      this.obstacleTimer = OBST_INTERVAL;
+      const want = 1 + Math.floor(Math.random() * 3);
+      for (let n = 0; n < want && this.obstacles.length < OBST_MAX; n++) this.trySpawnObstacle();
+    }
+  }
+
+  private trySpawnObstacle(): void {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const x = (Math.random() * 2 - 1) * OBST_SPAWN_HALF;
+      const z = (Math.random() * 2 - 1) * OBST_SPAWN_HALF;
+      if (Math.hypot(x, z) < OBST_CLEAR_CENTER) continue;
+      let clear = true;
+      for (const o of this.obstacles) {
+        if (Math.hypot(o.x - x, o.z - z) < OBST_R * 3) {
+          clear = false;
+          break;
+        }
+      }
+      if (!clear) continue;
+      this.obstacles.push({ x, z, r: OBST_R, age: 0, telegraph: OBST_TELEGRAPH, life: OBST_LIFETIME });
+      return;
+    }
+  }
+
+  /** Reflect the ball off any solid obstacle it overlaps. */
+  private resolveObstacles(ball: SimBall): void {
+    for (const o of this.obstacles) {
+      if (!PumpDashSim.isSolid(o)) continue;
+      const dx = ball.x - o.x;
+      const dz = ball.z - o.z;
+      const dist = Math.hypot(dx, dz);
+      const min = BALL_R + o.r;
+      if (dist >= min || dist < 1e-4) continue;
+      const nx = dx / dist;
+      const nz = dz / dist;
+      // Push the ball out and reflect its velocity about the surface normal.
+      ball.x = o.x + nx * min;
+      ball.z = o.z + nz * min;
+      const dot = ball.vx * nx + ball.vz * nz;
+      ball.vx -= 2 * dot * nx;
+      ball.vz -= 2 * dot * nz;
+      this.setMagnitude(ball, this.speed());
+    }
   }
 
   private bySide(side: number): SimPlayer | undefined {

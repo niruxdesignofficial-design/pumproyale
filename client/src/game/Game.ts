@@ -2,14 +2,15 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { teamColor, type AnimationState, type InputIntent } from "@party-royale/shared";
 import type { MatchState, PlayerState, EntityState } from "@engine/rooms/schema";
-import { ARENA_HALF, BALL_R } from "@engine/pumpdash/PumpDashSim";
+import { ARENA_HALF, BALL_R, DASH_CD } from "@engine/pumpdash/PumpDashSim";
 import { Renderer } from "../core/Renderer";
 import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { sound } from "../core/Sound";
 import { createScene } from "./Scene";
-import { buildArena, makeBall } from "./Arena";
+import { Arena, makeBall, makeObstacle } from "./Arena";
+import { preloadProps } from "./Props";
 import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
 import { getSelectedCharacter } from "./selection";
@@ -20,17 +21,57 @@ import { isOnlineEnabled } from "../net/NetClient";
 import { gameStore, type PumpPlayer } from "./store";
 
 const CENTER = new THREE.Vector3(0, 1.5, 0);
+const BALL_LERP_K = 18; // ball position smoothing rate
 
-/** Ring color for a player by their candy color index. */
+interface BallView {
+  mesh: THREE.Mesh;
+  tx: number;
+  ty: number;
+  tz: number;
+  px: number; // previous target (for velocity)
+  pz: number;
+  flash: number;
+}
+interface Obst {
+  group: THREE.Group;
+  setSolid(solid: boolean): void;
+}
+interface Shock {
+  mesh: THREE.Mesh;
+  ttl: number;
+  max: number;
+}
+interface Particle {
+  mesh: THREE.Mesh;
+  vx: number;
+  vy: number;
+  vz: number;
+  ttl: number;
+}
+
 function ringColorFor(colorIndex: number): number {
   return teamColor(colorIndex);
 }
 
+/** Inward normal (x,z) for a side: direction from the edge toward the center. */
+function inwardNormal(side: number): { x: number; z: number } {
+  switch (side) {
+    case 0:
+      return { x: 0, z: 1 };
+    case 1:
+      return { x: 0, z: -1 };
+    case 2:
+      return { x: 1, z: 0 };
+    default:
+      return { x: -1, z: 0 };
+  }
+}
+
 /**
- * PumpDash game client. Reads an authoritative MatchState each frame (online room
- * or in-browser offline sim), renders the four paddle avatars (one per arena side)
- * and the ball, frames the local player's side at the bottom, and mirrors live
- * state into the store. The render path is identical online and offline.
+ * PumpDash game client: reads an authoritative MatchState each frame (online room
+ * or offline sim), renders the four paddle avatars, the ball (smoothed), and
+ * mini-obstacles inside a forest diorama, with dash feedback (lunge, shockwave,
+ * particles, ball flash, shake). Frames the local player's side at the bottom.
  */
 export class Game {
   private readonly renderer: Renderer;
@@ -38,20 +79,28 @@ export class Game {
   private readonly cameraRig: CameraRig;
   private readonly input = new Input();
   private readonly loop: GameLoop;
-  private readonly arena: THREE.Group;
+  private arena: Arena | null = null;
   private session: MatchSession | null = null;
   private localId = "local";
 
   private readonly avatars = new Map<string, Avatar>();
-  private readonly balls: THREE.Mesh[] = [];
+  private readonly balls: BallView[] = [];
+  private readonly obstacles: Obst[] = [];
+  private readonly shocks: Shock[] = [];
+  private readonly particles: Particle[] = [];
   private readonly cAnim = new Map<string, string>();
   private readonly cEmote = new Map<string, string>();
   private readonly cPoints = new Map<string, number>();
   private readonly cAlive = new Map<string, boolean>();
-  private readonly ballPrev: { x: number; z: number }[] = [];
 
   private cameraSide = -1;
   private readonly camDesired = new THREE.Vector3(0, 12, ARENA_HALF + 9);
+  private shake = 0;
+  private dashCdClient = 0;
+  private dashWindow = 0;
+  private prevInputDash = false;
+  private dashPulse = 0;
+  private localSide = -1;
   private matchPhase = "";
   private prevTimer = -1;
   private prevBanner = "";
@@ -64,24 +113,23 @@ export class Game {
     this.renderer = new Renderer(canvas);
     const built = createScene();
     this.scene = built.scene;
-    // Hide the lobby platform/grid; PumpDash uses its own arena.
     built.platform.visible = false;
     built.grid.visible = false;
     const pmrem = new THREE.PMREMGenerator(this.renderer.instance);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
-    this.arena = buildArena();
-    this.scene.add(this.arena);
     this.cameraRig = new CameraRig(canvas, this.aspect());
-    this.cameraRig.controls.enabled = false; // fixed framing for PumpDash
+    this.cameraRig.controls.enabled = false;
     this.renderer.setSize(this.width(), this.height());
     this.loop = new GameLoop(this.onFrame);
     window.addEventListener("resize", this.onResize);
   }
 
   async start(): Promise<void> {
-    await preloadCharacters();
+    await Promise.all([preloadCharacters(), preloadProps()]);
     if (this.disposed) return;
+    this.arena = new Arena();
+    this.scene.add(this.arena.group);
 
     const options = {
       name: getPlayerName() || "Player",
@@ -131,16 +179,34 @@ export class Game {
     this.session = null;
     for (const avatar of this.avatars.values()) avatar.dispose();
     this.avatars.clear();
-    for (const b of this.balls) {
-      this.scene.remove(b);
-      b.geometry.dispose();
-      (b.material as THREE.Material).dispose();
-    }
+    for (const b of this.balls) this.disposeMesh(b.mesh);
     this.balls.length = 0;
-    this.scene.remove(this.arena);
+    for (const o of this.obstacles) this.scene.remove(o.group);
+    this.obstacles.length = 0;
+    for (const s of this.shocks) this.disposeMesh(s.mesh);
+    for (const p of this.particles) this.disposeMesh(p.mesh);
+    this.shocks.length = 0;
+    this.particles.length = 0;
+    if (this.arena) {
+      this.scene.remove(this.arena.group);
+      this.arena.dispose();
+    }
     this.cameraRig.dispose();
     this.renderer.dispose();
     gameStore.reset();
+  }
+
+  private disposeMesh(m: THREE.Object3D): void {
+    this.scene.remove(m);
+    m.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.geometry?.dispose?.();
+        const mat = mesh.material;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose?.();
+      }
+    });
   }
 
   private readonly onFrame = (dt: number): void => {
@@ -152,8 +218,9 @@ export class Game {
     }
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
-
-    this.updateCamera();
+    this.updateBalls(dt);
+    this.updateEffects(dt);
+    this.updateCamera(dt);
     this.renderer.render(this.scene, this.cameraRig.camera);
 
     this.fpsAccum += dt;
@@ -163,7 +230,6 @@ export class Game {
     }
   };
 
-  /** Diff the match state each frame to drive avatars, the ball, effects, store. */
   private syncFromState(state: MatchState): void {
     const seen = new Set<string>();
     let localSide = -1;
@@ -192,19 +258,17 @@ export class Game {
         avatar.setEmote(p.emote);
       }
 
-      // Concede: a player's points dropped.
       const prevPts = this.cPoints.get(id) ?? p.points;
       if (p.points < prevPts && this.matchPhase === "playing") {
         if (isLocal) {
           sound.play("lose");
-          this.cameraRig.addShake(0.3);
+          this.addShake(0.3);
         } else {
           sound.play("goal");
         }
       }
       this.cPoints.set(id, p.points);
 
-      // Eliminated.
       const prevAlive = this.cAlive.get(id) ?? true;
       if (prevAlive && !p.alive) sound.play("lose");
       this.cAlive.set(id, p.alive);
@@ -222,52 +286,179 @@ export class Game {
       this.cAlive.delete(id);
     }
 
-    if (localSide >= 0 && this.cameraSide !== localSide) this.setCameraSide(localSide);
+    if (localSide >= 0) {
+      this.localSide = localSide;
+      if (this.cameraSide !== localSide) {
+        this.setCameraSide(localSide);
+        this.arena?.highlightSide(localSide);
+      }
+    }
 
-    this.syncBalls(state.entities);
+    this.syncEntities(state.entities);
     this.publishStandings(state, localSide);
     this.syncGlobals(state);
   }
 
-  private syncBalls(entities: ArrayLike<EntityState>): void {
-    const list: EntityState[] = [];
+  /** Reconcile ball + obstacle meshes against the entity list. */
+  private syncEntities(entities: ArrayLike<EntityState>): void {
+    const ballEnts: EntityState[] = [];
+    const obstEnts: EntityState[] = [];
     for (let i = 0; i < entities.length; i++) {
       const e = entities[i]!;
-      if (e.kind === "ball" && e.active) list.push(e);
+      if (!e.active) continue;
+      if (e.kind === "ball") ballEnts.push(e);
+      else if (e.kind === "obstacle") obstEnts.push(e);
     }
-    while (this.balls.length < list.length) {
+
+    while (this.balls.length < ballEnts.length) {
       const mesh = makeBall(BALL_R);
       this.scene.add(mesh);
-      this.balls.push(mesh);
-      this.ballPrev.push({ x: 0, z: 0 });
+      this.balls.push({ mesh, tx: 0, ty: BALL_R, tz: 0, px: 0, pz: 0, flash: 0 });
     }
-    while (this.balls.length > list.length) {
-      const mesh = this.balls.pop()!;
-      this.ballPrev.pop();
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
+    while (this.balls.length > ballEnts.length) this.disposeMesh(this.balls.pop()!.mesh);
+    for (let i = 0; i < ballEnts.length; i++) {
+      const b = this.balls[i]!;
+      const e = ballEnts[i]!;
+      b.px = b.tx;
+      b.pz = b.tz;
+      b.tx = e.x;
+      b.ty = e.y;
+      b.tz = e.z;
     }
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i]!;
-      const mesh = this.balls[i]!;
-      const prev = this.ballPrev[i]!;
-      // Soft click when the ball changes direction (wall/paddle bounce).
-      if (this.matchPhase === "playing") {
-        const flipX = Math.sign(e.x - mesh.position.x) !== Math.sign(mesh.position.x - prev.x);
-        const flipZ = Math.sign(e.z - mesh.position.z) !== Math.sign(mesh.position.z - prev.z);
-        const moved = Math.abs(e.x - mesh.position.x) + Math.abs(e.z - mesh.position.z) > 0.001;
-        if (moved && (flipX || flipZ)) sound.play("shoot");
-      }
-      prev.x = mesh.position.x;
-      prev.z = mesh.position.z;
-      mesh.position.set(e.x, e.y, e.z);
-      mesh.rotation.x += 0.2;
-      mesh.rotation.y += 0.15;
+
+    while (this.obstacles.length < obstEnts.length) {
+      const o = makeObstacle();
+      this.scene.add(o.mesh);
+      this.obstacles.push({ group: o.mesh, setSolid: o.setSolid });
+    }
+    while (this.obstacles.length > obstEnts.length) this.scene.remove(this.obstacles.pop()!.group);
+    for (let i = 0; i < obstEnts.length; i++) {
+      const o = this.obstacles[i]!;
+      const e = obstEnts[i]!;
+      o.group.position.set(e.x, 0, e.z);
+      o.setSolid(e.variant === 1);
     }
   }
 
-  /** Mirror the player list + local info into the store (only when it changes). */
+  /** Smooth the ball meshes toward their target positions; detect dash blocks. */
+  private updateBalls(dt: number): void {
+    const k = 1 - Math.exp(-BALL_LERP_K * dt);
+    const inward = this.localSide >= 0 ? inwardNormal(this.localSide) : null;
+    const localAvatar = this.avatars.get(this.localId);
+    for (const b of this.balls) {
+      b.mesh.position.x += (b.tx - b.mesh.position.x) * k;
+      b.mesh.position.y += (b.ty - b.mesh.position.y) * k;
+      b.mesh.position.z += (b.tz - b.mesh.position.z) * k;
+      b.mesh.rotation.x += 6 * dt;
+      b.mesh.rotation.y += 4 * dt;
+
+      // Dash block: during the dash window, a ball near the local paddle now
+      // heading inward = a strong block; flash + shake + pop.
+      if (this.dashWindow > 0 && inward && localAvatar) {
+        const vx = b.tx - b.px;
+        const vz = b.tz - b.pz;
+        const near = Math.hypot(b.tx - localAvatar.position.x, b.tz - localAvatar.position.z) < 3.2;
+        const heading = vx * inward.x + vz * inward.z > 0.02;
+        if (near && heading) {
+          b.flash = 1;
+          this.addShake(0.32);
+          sound.play("goal");
+          this.dashWindow = 0;
+        }
+      }
+
+      const mat = b.mesh.material as THREE.MeshStandardMaterial;
+      mat.emissiveIntensity = 0.3 + b.flash * 1.6;
+      const col = mat.emissive;
+      if (b.flash > 0) {
+        col.setHex(0x9cf7c4);
+        b.flash = Math.max(0, b.flash - dt * 3);
+      } else {
+        col.setHex(0xa8f5c8);
+      }
+    }
+  }
+
+  private updateEffects(dt: number): void {
+    if (this.dashWindow > 0) this.dashWindow = Math.max(0, this.dashWindow - dt);
+    if (this.dashCdClient > 0) this.dashCdClient = Math.max(0, this.dashCdClient - dt);
+
+    // Local lunge: a quick scale pop on the local avatar.
+    const localAvatar = this.avatars.get(this.localId);
+    if (localAvatar) {
+      const s = 1 + 0.22 * this.dashPulse;
+      localAvatar.object3d.scale.setScalar(s);
+    }
+    if (this.dashPulse > 0) this.dashPulse = Math.max(0, this.dashPulse - dt * 4);
+
+    for (let i = this.shocks.length - 1; i >= 0; i--) {
+      const s = this.shocks[i]!;
+      s.ttl -= dt;
+      const k = Math.max(0, s.ttl / s.max);
+      const sc = 1 + (1 - k) * 5;
+      s.mesh.scale.set(sc, sc, sc);
+      (s.mesh.material as THREE.MeshBasicMaterial).opacity = k * 0.7;
+      if (s.ttl <= 0) {
+        this.disposeMesh(s.mesh);
+        this.shocks.splice(i, 1);
+      }
+    }
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i]!;
+      p.ttl -= dt;
+      p.vy -= 9 * dt;
+      p.mesh.position.x += p.vx * dt;
+      p.mesh.position.y += p.vy * dt;
+      p.mesh.position.z += p.vz * dt;
+      (p.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, p.ttl / 0.45);
+      if (p.ttl <= 0) {
+        this.disposeMesh(p.mesh);
+        this.particles.splice(i, 1);
+      }
+    }
+  }
+
+  private triggerDash(): void {
+    const a = this.avatars.get(this.localId);
+    if (!a) return;
+    this.dashPulse = 1;
+    this.dashWindow = 0.3;
+    sound.play("shoot");
+    // Shockwave ring at the avatar's feet.
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.3, 0.5, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x7cf0a8,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(a.position.x, 0.2, a.position.z);
+    this.scene.add(ring);
+    this.shocks.push({ mesh: ring, ttl: 0.5, max: 0.5 });
+    // Particle burst.
+    for (let i = 0; i < 10; i++) {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.12, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0x9cf7c4, transparent: true, opacity: 1 }),
+      );
+      m.position.set(a.position.x, 0.6, a.position.z);
+      this.scene.add(m);
+      const ang = Math.random() * Math.PI * 2;
+      const sp = 3 + Math.random() * 3;
+      this.particles.push({
+        mesh: m,
+        vx: Math.cos(ang) * sp,
+        vy: 2 + Math.random() * 2,
+        vz: Math.sin(ang) * sp,
+        ttl: 0.45,
+      });
+    }
+  }
+
   private publishStandings(state: MatchState, localSide: number): void {
     const list: PumpPlayer[] = [];
     let dashCd = 0;
@@ -300,7 +491,6 @@ export class Game {
     });
   }
 
-  /** Mirror top-level match flow into the store, firing sounds/shake on change. */
   private syncGlobals(state: MatchState): void {
     if (state.phase !== this.matchPhase) {
       if (state.phase === "playing") sound.play("go");
@@ -327,7 +517,7 @@ export class Game {
       });
       if (state.winnerId.length > 0) {
         sound.play(isLocal ? "win" : "lose");
-        if (isLocal) this.cameraRig.addShake(0.5);
+        if (isLocal) this.addShake(0.5);
       }
     }
   }
@@ -352,14 +542,24 @@ export class Game {
         this.camDesired.set(D, H, 0);
         break;
     }
-    // Snap on first assignment.
     this.cameraRig.camera.position.copy(this.camDesired);
     this.cameraRig.camera.lookAt(CENTER);
   }
 
-  private updateCamera(): void {
+  private addShake(mag: number): void {
+    this.shake = Math.min(0.6, this.shake + mag);
+  }
+
+  private updateCamera(dt: number): void {
     const cam = this.cameraRig.camera;
-    cam.position.lerp(this.camDesired, 0.08);
+    cam.position.lerp(this.camDesired, 1 - Math.exp(-6 * dt));
+    if (this.shake > 0.001) {
+      cam.position.x += (Math.random() - 0.5) * this.shake * 2;
+      cam.position.y += (Math.random() - 0.5) * this.shake * 2;
+      this.shake *= Math.exp(-8 * dt);
+    } else {
+      this.shake = 0;
+    }
     cam.lookAt(CENTER);
   }
 
@@ -368,6 +568,11 @@ export class Game {
   private sampleInput(): InputIntent {
     const slide = (this.input.isActive("right") ? 1 : 0) - (this.input.isActive("left") ? 1 : 0);
     const dash = this.input.isActive("jump") || this.input.isActive("action");
+    if (dash && !this.prevInputDash && this.dashCdClient <= 0 && this.matchPhase === "playing") {
+      this.dashCdClient = DASH_CD;
+      this.triggerDash();
+    }
+    this.prevInputDash = dash;
     return {
       moveX: slide,
       moveZ: 0,

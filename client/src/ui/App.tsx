@@ -6,7 +6,6 @@ import { SolanaProviders } from "../solana/SolanaProviders";
 import { Hud } from "./Hud";
 import { Menu } from "./Menu";
 import { CharacterSelect } from "./CharacterSelect";
-import { SocialLink } from "./SocialLink";
 
 type Screen = "menu" | "select" | "playing";
 
@@ -56,7 +55,6 @@ export function App() {
             />
           </>
         )}
-        <SocialLink />
       </div>
     </SolanaProviders>
   );
