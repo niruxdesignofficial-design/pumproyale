@@ -72,7 +72,7 @@ export function Hud({
   return (
     <div className="hud">
       <div className="hud-card hud-topbar">
-        <div className="hud-brand">PumpDash</div>
+        <div className="hud-brand">Pump Crash</div>
         <div className="hud-tag">Block the ball. Last one standing wins.</div>
       </div>
 

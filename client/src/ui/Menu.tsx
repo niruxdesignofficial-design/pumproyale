@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Leaderboard } from "./Leaderboard";
+import { CaBadge } from "./CaBadge";
 import { Online } from "./Hud";
 import { sound } from "../core/Sound";
 import { getPlayerName, isValidPlayerName, setPlayerName } from "../game/name";
@@ -42,8 +43,9 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
   return (
     <div className="screen menu-screen">
       <div className="menu-hero">
-        <h1 className="game-title">PumpDash</h1>
+        <h1 className="game-title">Pump Crash</h1>
         <p className="game-sub">4 players, one arena. Block the ball. Last one standing wins.</p>
+        <CaBadge />
         <Online />
 
         <div className="name-row">
@@ -126,7 +128,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
 
         {howTo && (
           <div className="howto-card">
-            <div className="howto-title">How to play PumpDash</div>
+            <div className="howto-title">How to play Pump Crash</div>
             <ul className="howto-list">
               <li>You guard one side of the arena.</li>
               <li>Slide along your side with A / D or the arrow keys.</li>
