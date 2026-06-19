@@ -676,6 +676,134 @@ body,
   color: #ff6a6a;
 }
 
+/* --- PumpDash HUD --- */
+.side-score {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgba(8, 16, 24, 0.62);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+  min-width: 96px;
+}
+.side-top {
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.side-bottom {
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.side-left {
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.side-right {
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.side-score.you {
+  border-color: var(--candy-mint, #5fe0b0);
+  box-shadow: 0 0 0 4px rgba(95, 224, 176, 0.18);
+}
+.side-score.out {
+  opacity: 0.4;
+}
+.side-score-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.side-score-pts {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--candy-mint, #5fe0b0);
+}
+.side-score.out .side-score-pts {
+  font-size: 18px;
+  color: #ff6a6a;
+}
+.side-score-wallet {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.dash-bar {
+  position: absolute;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.dash-ready {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #0b1410;
+  background: var(--candy-mint, #5fe0b0);
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+.dash-cool {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(8, 16, 24, 0.6);
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.hud-place {
+  font-size: 16px;
+  opacity: 0.85;
+}
+
+.link-btn {
+  pointer-events: auto;
+  background: none;
+  border: none;
+  color: var(--candy-mint, #5fe0b0);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  margin-top: 4px;
+}
+
+.howto-card {
+  pointer-events: auto;
+  max-width: 360px;
+  margin: 4px auto 0;
+  padding: 14px 18px;
+  border-radius: 14px;
+  text-align: left;
+  background: rgba(8, 20, 14, 0.78);
+  border: 2px solid var(--candy-mint, #5fe0b0);
+}
+.howto-title {
+  font-size: 15px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  color: var(--candy-mint, #5fe0b0);
+}
+.howto-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 /* Official contract address — tap anywhere on it to copy. */
 .ca-badge {
   pointer-events: auto;

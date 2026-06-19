@@ -4,43 +4,41 @@
 
 export type ConnectionStatus = "connecting" | "connected" | "error";
 
-/** One player's live standing, for the scoreboard. */
-export interface Standing {
+/** One player around the PumpDash arena, for the side scores + end screen. */
+export interface PumpPlayer {
   readonly id: string;
   readonly name: string;
+  /** Arena side guarded: 0 top, 1 bottom, 2 left, 3 right. */
+  readonly side: number;
   readonly points: number;
-  readonly roundScore: number;
-  readonly colorIndex: number;
-  readonly team: number;
+  readonly alive: boolean;
   readonly isLocal: boolean;
   readonly isBot: boolean;
+  readonly colorIndex: number;
+  readonly wallet: string;
 }
 
 export interface GameState {
   readonly status: ConnectionStatus;
   readonly fps: number;
-  readonly playerCount: number;
   readonly usingFallback: boolean;
   readonly error: string;
-  // Match flow.
+  // Match flow: "" | matchmaking | countdown | playing | ended.
   readonly matchPhase: string;
-  readonly round: number;
-  readonly roundCount: number;
-  readonly minigame: string;
   readonly timer: number;
+  readonly players: readonly PumpPlayer[];
   readonly alivePlayers: number;
-  // Scoreboard (points-based; highest total wins).
-  readonly standings: readonly Standing[];
-  // Transient banner (e.g. "GOAL! Blue 2 - 1 Red").
+  /** Which side the local player guards (-1 until known). */
+  readonly youSide: number;
+  /** Local dash cooldown remaining (s) and whether it is ready. */
+  readonly dashCd: number;
+  readonly dashReady: boolean;
+  // Transient banner ("Ava eliminated"); "" when hidden.
   readonly banner: string;
-  // Local player.
-  readonly localAlive: boolean;
-  readonly localPlacement: number;
-  readonly localCombo: number;
-  // Transient "+N" score popup (key changes each time to retrigger the animation).
-  readonly scorePop: { amount: number; key: number };
+  // End screen.
   readonly isLocalWinner: boolean;
   readonly winnerName: string;
+  readonly localPlacement: number;
   // Room code for private games (shown in the lobby so the host can share it).
   readonly roomCode: string;
 }
@@ -48,23 +46,19 @@ export interface GameState {
 const INITIAL: GameState = {
   status: "connecting",
   fps: 0,
-  playerCount: 0,
   usingFallback: false,
   error: "",
   matchPhase: "",
-  round: 0,
-  roundCount: 0,
-  minigame: "",
   timer: 0,
+  players: [],
   alivePlayers: 0,
-  standings: [],
+  youSide: -1,
+  dashCd: 0,
+  dashReady: true,
   banner: "",
-  localAlive: true,
-  localPlacement: 0,
-  localCombo: 0,
-  scorePop: { amount: 0, key: 0 },
   isLocalWinner: false,
   winnerName: "",
+  localPlacement: 0,
   roomCode: "",
 };
 

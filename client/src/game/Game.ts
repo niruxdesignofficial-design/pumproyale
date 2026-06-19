@@ -1,51 +1,36 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { MAX_PLAYERS, teamColor, type AnimationState, type InputIntent } from "@party-royale/shared";
-import type { MatchState, PlayerState } from "@engine/rooms/schema";
+import { teamColor, type AnimationState, type InputIntent } from "@party-royale/shared";
+import type { MatchState, PlayerState, EntityState } from "@engine/rooms/schema";
+import { ARENA_HALF, BALL_R } from "@engine/pumpdash/PumpDashSim";
 import { Renderer } from "../core/Renderer";
 import { CameraRig } from "../core/CameraRig";
 import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { sound } from "../core/Sound";
 import { createScene } from "./Scene";
-import { MinigameViews } from "./MinigameViews";
+import { buildArena, makeBall } from "./Arena";
 import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
-import { preloadVarietyProps } from "./VarietyProps";
 import { getSelectedCharacter } from "./selection";
 import { getPlayerName } from "./name";
 import { getPlayerWallet } from "./wallet";
 import { LocalSession, OnlineSession, type MatchSession } from "./session";
 import { isOnlineEnabled } from "../net/NetClient";
-import { gameStore, type Standing } from "./store";
+import { gameStore, type PumpPlayer } from "./store";
 
-const UP = new THREE.Vector3(0, 1, 0);
-const CENTER = new THREE.Vector3(0, 1, 0);
+const CENTER = new THREE.Vector3(0, 1.5, 0);
 
-/** Minimal shape of a synced dynamic entity (for the minigame view layer). */
-interface NetEntity {
-  kind: string;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  active: boolean;
-  variant: number;
-}
-
-/** Ground-ring color for a player: team color in team rounds, else candy color. */
-function ringColorFor(team: number, colorIndex: number): number {
-  if (team === 0) return 0x4aa3ff; // Blue
-  if (team === 1) return 0xff5a5a; // Red
+/** Ring color for a player by their candy color index. */
+function ringColorFor(colorIndex: number): number {
   return teamColor(colorIndex);
 }
 
 /**
- * Game client. Reads an authoritative MatchState each frame and renders an Avatar
- * per player, samples local input, and mirrors the live state into the store. The
- * state comes from a MatchSession: online (a shared Colyseus room with friends +
- * bots) when a server is configured, otherwise offline (the full match simulated
- * in-browser, 1 human + 3 bots). The render path is identical for both.
+ * PumpDash game client. Reads an authoritative MatchState each frame (online room
+ * or in-browser offline sim), renders the four paddle avatars (one per arena side)
+ * and the ball, frames the local player's side at the bottom, and mirrors live
+ * state into the store. The render path is identical online and offline.
  */
 export class Game {
   private readonly renderer: Renderer;
@@ -53,58 +38,53 @@ export class Game {
   private readonly cameraRig: CameraRig;
   private readonly input = new Input();
   private readonly loop: GameLoop;
-  private readonly minigameViews: MinigameViews;
+  private readonly arena: THREE.Group;
   private session: MatchSession | null = null;
   private localId = "local";
 
   private readonly avatars = new Map<string, Avatar>();
-  private readonly tracers: { mesh: THREE.Mesh; ttl: number }[] = [];
-  private readonly dust: { mesh: THREE.Mesh; ttl: number; max: number }[] = [];
-  // Per-player change caches (replace Colyseus onChange) + global flow caches.
+  private readonly balls: THREE.Mesh[] = [];
   private readonly cAnim = new Map<string, string>();
-  private readonly cTeam = new Map<string, number>();
   private readonly cEmote = new Map<string, string>();
-  private cameraSnapped = false;
-  private standingsSig = "";
+  private readonly cPoints = new Map<string, number>();
+  private readonly cAlive = new Map<string, boolean>();
+  private readonly ballPrev: { x: number; z: number }[] = [];
+
+  private cameraSide = -1;
+  private readonly camDesired = new THREE.Vector3(0, 12, ARENA_HALF + 9);
   private matchPhase = "";
-  private currentMinigame = "";
-  private localRoundScore = 0;
-  private scorePopKey = 0;
   private prevTimer = -1;
-  private prevRound = -1;
-  private prevRoundCount = -1;
-  private prevAlive = -1;
   private prevBanner = "";
   private prevWinnerId = "";
-  private prevWinnerName = "";
-
+  private standingsSig = "";
   private disposed = false;
-  private seq = 0;
   private fpsAccum = 0;
-
-  private readonly forward = new THREE.Vector3();
-  private readonly right = new THREE.Vector3();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     const built = createScene();
     this.scene = built.scene;
+    // Hide the lobby platform/grid; PumpDash uses its own arena.
+    built.platform.visible = false;
+    built.grid.visible = false;
     const pmrem = new THREE.PMREMGenerator(this.renderer.instance);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
-    this.minigameViews = new MinigameViews(built.scene, built.platform, built.grid);
+    this.arena = buildArena();
+    this.scene.add(this.arena);
     this.cameraRig = new CameraRig(canvas, this.aspect());
+    this.cameraRig.controls.enabled = false; // fixed framing for PumpDash
     this.renderer.setSize(this.width(), this.height());
     this.loop = new GameLoop(this.onFrame);
     window.addEventListener("resize", this.onResize);
   }
 
   async start(): Promise<void> {
-    await Promise.all([preloadCharacters(), preloadVarietyProps()]);
+    await preloadCharacters();
     if (this.disposed) return;
 
     const options = {
-      name: getPlayerName() || randomName(),
+      name: getPlayerName() || "Player",
       character: getSelectedCharacter(),
       wallet: getPlayerWallet() || undefined,
     };
@@ -137,7 +117,6 @@ export class Game {
 
     this.input.attach();
     window.addEventListener("keydown", this.enableSound, { once: true });
-    window.addEventListener("keydown", this.onEmoteKey);
     gameStore.set({ status: "connected", usingFallback: getCharacterGltf("knight") === null });
     this.loop.start();
   }
@@ -148,23 +127,17 @@ export class Game {
     window.removeEventListener("resize", this.onResize);
     this.input.detach();
     window.removeEventListener("keydown", this.enableSound);
-    window.removeEventListener("keydown", this.onEmoteKey);
     this.session?.dispose();
     this.session = null;
-    for (const t of this.tracers) {
-      this.scene.remove(t.mesh);
-      t.mesh.geometry.dispose();
-      (t.mesh.material as THREE.Material).dispose();
-    }
-    this.tracers.length = 0;
-    for (const d of this.dust) {
-      this.scene.remove(d.mesh);
-      d.mesh.geometry.dispose();
-      (d.mesh.material as THREE.Material).dispose();
-    }
-    this.dust.length = 0;
     for (const avatar of this.avatars.values()) avatar.dispose();
     this.avatars.clear();
+    for (const b of this.balls) {
+      this.scene.remove(b);
+      b.geometry.dispose();
+      (b.material as THREE.Material).dispose();
+    }
+    this.balls.length = 0;
+    this.scene.remove(this.arena);
     this.cameraRig.dispose();
     this.renderer.dispose();
     gameStore.reset();
@@ -180,31 +153,7 @@ export class Game {
 
     for (const avatar of this.avatars.values()) avatar.update(dt);
 
-    if (session) {
-      const st = session.state;
-      let view = "";
-      if (st.phase === "waiting" || st.phase === "matchmaking") view = "lobby";
-      else if ((st.phase === "playing" || st.phase === "intro") && st.minigame) view = st.minigame;
-      this.minigameViews.setMinigame(view);
-      this.minigameViews.update(
-        dt,
-        st.roundClock,
-        st.entities as unknown as ArrayLike<NetEntity>,
-        st.tiles as unknown as ArrayLike<number>,
-      );
-      this.publishStandings(st);
-    }
-
-    this.updateTracers(dt);
-    this.updateDust(dt);
-
-    const localAvatar = this.avatars.get(this.localId);
-    if (localAvatar) {
-      this.cameraRig.follow(localAvatar.position);
-      this.cameraRig.update();
-    } else {
-      this.cameraRig.spectate(CENTER);
-    }
+    this.updateCamera();
     this.renderer.render(this.scene, this.cameraRig.camera);
 
     this.fpsAccum += dt;
@@ -214,62 +163,51 @@ export class Game {
     }
   };
 
-  /** Diff the local match state each frame to drive avatars, juice, and the store. */
+  /** Diff the match state each frame to drive avatars, the ball, effects, store. */
   private syncFromState(state: MatchState): void {
     const seen = new Set<string>();
+    let localSide = -1;
     state.players.forEach((p: PlayerState, id: string) => {
       seen.add(id);
       const isLocal = id === this.localId;
+      if (isLocal) localSide = p.side;
       let avatar = this.avatars.get(id);
       if (!avatar) {
-        avatar = new Avatar(p.character, teamColor(p.colorIndex), isLocal ? `${p.name} (you)` : p.name);
+        avatar = new Avatar(p.character, ringColorFor(p.colorIndex), isLocal ? `${p.name} (you)` : p.name);
         if (isLocal) avatar.setLocal();
         avatar.setTarget(p.x, p.y, p.z, p.yaw);
         this.scene.add(avatar.object3d);
         this.avatars.set(id, avatar);
         this.cAnim.set(id, p.anim);
-        this.cTeam.set(id, NaN);
         this.cEmote.set(id, "");
-        gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
-        if (isLocal && !this.cameraSnapped) {
-          this.cameraRig.snapTo(avatar.position);
-          this.cameraSnapped = true;
-        }
+        this.cPoints.set(id, p.points);
+        this.cAlive.set(id, p.alive);
       }
       avatar.setTarget(p.x, p.y, p.z, p.yaw);
-
-      const anim = asAnim(p.anim);
-      const lastAnim = this.cAnim.get(id) ?? "idle";
-      if (anim === "shoot" && lastAnim !== "shoot") {
-        const yaw = isLocal ? Math.atan2(this.forward.x, this.forward.z) : p.yaw;
-        this.spawnTracer(avatar.position, yaw);
-        if (isLocal) sound.play("shoot");
-      }
-      const wasAir = lastAnim === "jump" || lastAnim === "fall" || lastAnim === "dive";
-      if (wasAir && (anim === "idle" || anim === "run")) this.spawnDust(avatar.position);
-      if (anim === "hit" && lastAnim !== "hit" && isLocal) this.cameraRig.addShake(0.28);
+      avatar.setAnim(asAnim(p.anim));
       this.cAnim.set(id, p.anim);
-      avatar.setAnim(anim);
 
       if (p.emote !== this.cEmote.get(id)) {
         this.cEmote.set(id, p.emote);
         avatar.setEmote(p.emote);
       }
-      if (p.team !== this.cTeam.get(id)) {
-        this.cTeam.set(id, p.team);
-        avatar.setRingColor(ringColorFor(p.team, p.colorIndex));
-      }
 
-      if (isLocal) {
-        const delta = p.roundScore - this.localRoundScore;
-        if (delta > 0 && /gem/i.test(this.currentMinigame)) sound.play("pickup");
-        if (delta !== 0 && this.matchPhase === "playing") {
-          this.scorePopKey += 1;
-          gameStore.set({ scorePop: { amount: delta, key: this.scorePopKey } });
+      // Concede: a player's points dropped.
+      const prevPts = this.cPoints.get(id) ?? p.points;
+      if (p.points < prevPts && this.matchPhase === "playing") {
+        if (isLocal) {
+          sound.play("lose");
+          this.cameraRig.addShake(0.3);
+        } else {
+          sound.play("goal");
         }
-        this.localRoundScore = p.roundScore;
-        gameStore.set({ localPlacement: p.placement, localCombo: p.combo });
       }
+      this.cPoints.set(id, p.points);
+
+      // Eliminated.
+      const prevAlive = this.cAlive.get(id) ?? true;
+      if (prevAlive && !p.alive) sound.play("lose");
+      this.cAlive.set(id, p.alive);
     });
 
     for (const id of [...this.avatars.keys()]) {
@@ -279,12 +217,87 @@ export class Game {
       a.dispose();
       this.avatars.delete(id);
       this.cAnim.delete(id);
-      this.cTeam.delete(id);
       this.cEmote.delete(id);
-      gameStore.set({ playerCount: Math.min(this.avatars.size, MAX_PLAYERS) });
+      this.cPoints.delete(id);
+      this.cAlive.delete(id);
     }
 
+    if (localSide >= 0 && this.cameraSide !== localSide) this.setCameraSide(localSide);
+
+    this.syncBalls(state.entities);
+    this.publishStandings(state, localSide);
     this.syncGlobals(state);
+  }
+
+  private syncBalls(entities: ArrayLike<EntityState>): void {
+    const list: EntityState[] = [];
+    for (let i = 0; i < entities.length; i++) {
+      const e = entities[i]!;
+      if (e.kind === "ball" && e.active) list.push(e);
+    }
+    while (this.balls.length < list.length) {
+      const mesh = makeBall(BALL_R);
+      this.scene.add(mesh);
+      this.balls.push(mesh);
+      this.ballPrev.push({ x: 0, z: 0 });
+    }
+    while (this.balls.length > list.length) {
+      const mesh = this.balls.pop()!;
+      this.ballPrev.pop();
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i]!;
+      const mesh = this.balls[i]!;
+      const prev = this.ballPrev[i]!;
+      // Soft click when the ball changes direction (wall/paddle bounce).
+      if (this.matchPhase === "playing") {
+        const flipX = Math.sign(e.x - mesh.position.x) !== Math.sign(mesh.position.x - prev.x);
+        const flipZ = Math.sign(e.z - mesh.position.z) !== Math.sign(mesh.position.z - prev.z);
+        const moved = Math.abs(e.x - mesh.position.x) + Math.abs(e.z - mesh.position.z) > 0.001;
+        if (moved && (flipX || flipZ)) sound.play("shoot");
+      }
+      prev.x = mesh.position.x;
+      prev.z = mesh.position.z;
+      mesh.position.set(e.x, e.y, e.z);
+      mesh.rotation.x += 0.2;
+      mesh.rotation.y += 0.15;
+    }
+  }
+
+  /** Mirror the player list + local info into the store (only when it changes). */
+  private publishStandings(state: MatchState, localSide: number): void {
+    const list: PumpPlayer[] = [];
+    let dashCd = 0;
+    state.players.forEach((p: PlayerState, id: string) => {
+      const isLocal = id === this.localId;
+      if (isLocal) dashCd = p.dashCd;
+      list.push({
+        id,
+        name: p.name,
+        side: p.side,
+        points: p.points,
+        alive: p.alive,
+        isLocal,
+        isBot: p.isBot,
+        colorIndex: p.colorIndex,
+        wallet: p.wallet,
+      });
+    });
+    const sig =
+      list.map((x) => `${x.id}:${x.side}:${x.points}:${x.alive ? 1 : 0}`).join("|") +
+      `#${localSide}:${dashCd.toFixed(1)}`;
+    if (sig === this.standingsSig) return;
+    this.standingsSig = sig;
+    gameStore.set({
+      players: list,
+      youSide: localSide,
+      dashCd,
+      dashReady: dashCd <= 0.01,
+      alivePlayers: list.filter((p) => p.alive).length,
+    });
   }
 
   /** Mirror top-level match flow into the store, firing sounds/shake on change. */
@@ -294,43 +307,24 @@ export class Game {
       this.matchPhase = state.phase;
       gameStore.set({ matchPhase: state.phase });
     }
-    if (state.minigame !== this.currentMinigame) {
-      this.currentMinigame = state.minigame;
-      gameStore.set({ minigame: state.minigame });
-    }
-    if (state.round !== this.prevRound) {
-      this.prevRound = state.round;
-      gameStore.set({ round: state.round });
-    }
-    if (state.roundCount !== this.prevRoundCount) {
-      this.prevRoundCount = state.roundCount;
-      gameStore.set({ roundCount: state.roundCount });
-    }
     if (state.timer !== this.prevTimer) {
       if (this.matchPhase === "countdown" && state.timer > 0) sound.play("tick");
       this.prevTimer = state.timer;
       gameStore.set({ timer: state.timer });
     }
-    if (state.alive !== this.prevAlive) {
-      this.prevAlive = state.alive;
-      gameStore.set({ alivePlayers: state.alive });
-    }
     if (state.banner !== this.prevBanner) {
-      if (state.banner && /goal/i.test(state.banner)) {
-        sound.play("goal");
-        this.cameraRig.addShake(0.22);
-      }
       this.prevBanner = state.banner;
       gameStore.set({ banner: state.banner });
-    }
-    if (state.winnerName !== this.prevWinnerName) {
-      this.prevWinnerName = state.winnerName;
-      gameStore.set({ winnerName: state.winnerName });
     }
     if (state.winnerId !== this.prevWinnerId) {
       this.prevWinnerId = state.winnerId;
       const isLocal = state.winnerId.length > 0 && state.winnerId === this.localId;
-      gameStore.set({ isLocalWinner: isLocal });
+      const me = state.players.get(this.localId);
+      gameStore.set({
+        isLocalWinner: isLocal,
+        winnerName: state.winnerName,
+        localPlacement: me?.placement ?? 0,
+      });
       if (state.winnerId.length > 0) {
         sound.play(isLocal ? "win" : "lose");
         if (isLocal) this.cameraRig.addShake(0.5);
@@ -338,115 +332,50 @@ export class Game {
     }
   }
 
-  /** Build the live scoreboard from the local state; only push when it changes. */
-  private publishStandings(state: MatchState): void {
-    const list: Standing[] = [];
-    state.players.forEach((p: PlayerState, id: string) => {
-      list.push({
-        id,
-        name: p.name,
-        points: p.points,
-        roundScore: p.roundScore,
-        colorIndex: p.colorIndex,
-        team: p.team,
-        isLocal: id === this.localId,
-        isBot: p.isBot,
-      });
-    });
-    list.sort((a, b) => b.points - a.points || b.roundScore - a.roundScore);
-    const sig = list.map((x) => `${x.id}:${x.points}:${x.roundScore}:${x.team}`).join("|");
-    if (sig === this.standingsSig) return;
-    this.standingsSig = sig;
-    gameStore.set({ standings: list });
-  }
+  // --- camera --------------------------------------------------------------
 
-  /** Spawn a short cosmetic shot tracer from a shooter along their facing yaw. */
-  private spawnTracer(from: THREE.Vector3, yaw: number): void {
-    const len = 9;
-    const geo = new THREE.BoxGeometry(0.07, 0.07, len);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffe07a, transparent: true, opacity: 0.9 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(from.x + Math.sin(yaw) * (len / 2), from.y + 1.0, from.z + Math.cos(yaw) * (len / 2));
-    mesh.rotation.y = yaw;
-    this.scene.add(mesh);
-    this.tracers.push({ mesh, ttl: 0.12 });
-  }
-
-  private updateTracers(dt: number): void {
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const t = this.tracers[i]!;
-      t.ttl -= dt;
-      const mat = t.mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(0, t.ttl / 0.12) * 0.9;
-      if (t.ttl <= 0) {
-        this.scene.remove(t.mesh);
-        t.mesh.geometry.dispose();
-        mat.dispose();
-        this.tracers.splice(i, 1);
-      }
+  private setCameraSide(side: number): void {
+    this.cameraSide = side;
+    const D = ARENA_HALF + 9;
+    const H = 12;
+    switch (side) {
+      case 0:
+        this.camDesired.set(0, H, -D);
+        break;
+      case 1:
+        this.camDesired.set(0, H, D);
+        break;
+      case 2:
+        this.camDesired.set(-D, H, 0);
+        break;
+      default:
+        this.camDesired.set(D, H, 0);
+        break;
     }
+    // Snap on first assignment.
+    this.cameraRig.camera.position.copy(this.camDesired);
+    this.cameraRig.camera.lookAt(CENTER);
   }
 
-  /** A quick expanding dust ring at an avatar's feet when it lands. */
-  private spawnDust(at: THREE.Vector3): void {
-    const geo = new THREE.RingGeometry(0.18, 0.34, 20);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xf3ead2,
-      transparent: true,
-      opacity: 0.55,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(at.x, 0.06, at.z);
-    this.scene.add(mesh);
-    this.dust.push({ mesh, ttl: 0.4, max: 0.4 });
+  private updateCamera(): void {
+    const cam = this.cameraRig.camera;
+    cam.position.lerp(this.camDesired, 0.08);
+    cam.lookAt(CENTER);
   }
 
-  private updateDust(dt: number): void {
-    for (let i = this.dust.length - 1; i >= 0; i--) {
-      const d = this.dust[i]!;
-      d.ttl -= dt;
-      const k = Math.max(0, d.ttl / d.max);
-      const s = 1 + (1 - k) * 2.4;
-      d.mesh.scale.set(s, s, s);
-      (d.mesh.material as THREE.MeshBasicMaterial).opacity = k * 0.55;
-      if (d.ttl <= 0) {
-        this.scene.remove(d.mesh);
-        d.mesh.geometry.dispose();
-        (d.mesh.material as THREE.Material).dispose();
-        this.dust.splice(i, 1);
-      }
-    }
-  }
-
-  private readonly onEmoteKey = (e: KeyboardEvent): void => {
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
-    const map: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
-    const id = map[e.code];
-    if (id === undefined) return;
-    this.session?.sendEmote(id);
-  };
+  // --- input ---------------------------------------------------------------
 
   private sampleInput(): InputIntent {
-    const f = (this.input.isActive("forward") ? 1 : 0) - (this.input.isActive("back") ? 1 : 0);
-    const r = (this.input.isActive("right") ? 1 : 0) - (this.input.isActive("left") ? 1 : 0);
-
-    this.cameraRig.getForward(this.forward);
-    this.right.crossVectors(this.forward, UP).normalize();
-
+    const slide = (this.input.isActive("right") ? 1 : 0) - (this.input.isActive("left") ? 1 : 0);
+    const dash = this.input.isActive("jump") || this.input.isActive("action");
     return {
-      moveX: this.forward.x * f + this.right.x * r,
-      moveZ: this.forward.z * f + this.right.z * r,
-      run: this.input.isActive("run"),
-      jump: this.input.isActive("jump"),
-      dive: this.input.isActive("dive"),
-      action: this.input.isActive("action"),
-      aimX: this.forward.x,
-      aimZ: this.forward.z,
-      seq: this.seq++,
+      moveX: slide,
+      moveZ: 0,
+      run: false,
+      jump: dash,
+      dive: false,
+      action: dash,
+      seq: 0,
     };
   }
 
@@ -473,10 +402,4 @@ export class Game {
 const ANIM_STATES = new Set(["idle", "run", "jump", "fall", "dive", "hit", "win", "lose", "shoot"]);
 function asAnim(value: string): AnimationState {
   return (ANIM_STATES.has(value) ? value : "idle") as AnimationState;
-}
-
-function randomName(): string {
-  const animals = ["Fox", "Bear", "Duck", "Wolf", "Cat", "Owl", "Frog", "Hare"];
-  const animal = animals[Math.floor(Math.random() * animals.length)];
-  return `${animal}-${Math.floor(Math.random() * 100)}`;
 }
