@@ -1,43 +1,54 @@
 import {
+  ARENA,
   CHARACTER_IDS,
   EMOTES,
   MAX_PLAYERS,
+  PHYS,
+  PLACE_POINTS,
   TICK_RATE,
   isValidCharacter,
+  lobbyMap,
+  spawnPoint,
   type InputIntent,
 } from "@party-royale/shared";
+import RAPIER from "@dimforge/rapier3d-compat";
+import { PhysicsWorld } from "@engine/physics/PhysicsWorld";
+import { PlayerSim } from "@engine/physics/PlayerSim";
+import { BotController } from "@engine/ai/BotController";
+import { buildRoundPlan } from "@engine/match/MinigameRegistry";
+import type { IMinigame, MinigameContext } from "@engine/match/IMinigame";
+import { buildMapColliders, removeColliders } from "@engine/match/mapColliders";
 import { EntityState, MatchState, PlayerState } from "@engine/rooms/schema";
-import {
-  PumpDashSim,
-  START_POINTS,
-  faceYaw,
-  sideWorld,
-  slideSign,
-} from "@engine/pumpdash/PumpDashSim";
 import { pickBotName } from "./botNames";
 import { randomWallet } from "./fakeWallet";
 import { recordLocalResult } from "./localLeaderboard";
 
 const COUNTDOWN = 4;
-const END_SCREEN = 12;
+const INTRO_TIME = 3.5;
+const END_SCREEN = 14;
 /** "Searching for players" window (s) before the match starts — feels like matchmaking. */
 const MATCHMAKING_MIN = 1.5;
 const MATCHMAKING_MAX = 4;
 const STEP = 1 / TICK_RATE;
-const BALL_Y = 0.7;
 
-type Phase = "matchmaking" | "countdown" | "playing" | "ended";
+type Phase = "matchmaking" | "countdown" | "intro" | "playing" | "ended";
 
 /**
- * Offline, in-browser PumpDash host. Runs the same authoritative PumpDashSim the
- * server runs (one human + three bots), exposing a `MatchState` the renderer
- * reads. No network.
+ * Offline, in-browser replacement for the Colyseus client + room. Runs the exact
+ * authoritative match simulation (physics, the four minigames, bot AI) locally with
+ * one human + three bots, exposing a `MatchState` the renderer reads. No network.
  */
 export class LocalGameManager {
   readonly localId = "local";
   state = new MatchState();
 
-  private readonly sim = new PumpDashSim();
+  private physics!: PhysicsWorld;
+  private ctx!: MinigameContext;
+  private readonly sims = new Map<string, PlayerSim>();
+  private readonly bots = new Map<string, BotController>();
+  private readonly botOrder = new Map<string, number>();
+  private readonly actionEdge = new Map<string, boolean>();
+  private readonly lastAction = new Map<string, boolean>();
   private readonly emoteTimers = new Map<string, number>();
   private localInput: InputIntent = {
     moveX: 0,
@@ -49,30 +60,41 @@ export class LocalGameManager {
     seq: 0,
   };
 
-  private localSide = 1;
+  private platformCollider: RAPIER.Collider | null = null;
+  private lobbyColliders: RAPIER.Collider[] = [];
+  private bannerTimer = 0;
+  private spawnCounter = 0;
+  private botCounter = 0;
+  private botSeq = 0;
+  private colorCounter = 0;
   private phaseTimer = 0;
+  private roundIndex = 0;
+  private roundElapsed = 0;
+  private roundPlan: IMinigame[] = [];
+  private minigame: IMinigame | null = null;
   private acc = 0;
   private recorded = false;
-  private bannerTimer = 0;
-  private botCounter = 0;
-  private colorCounter = 0;
 
   constructor(
     private readonly opts: { name: string; character: string; wallet: string | null },
   ) {}
 
-  /** Spawn the human + bots and enter matchmaking. */
+  /** Boot Rapier, build the lobby, spawn the human + bots, enter matchmaking. */
   async start(): Promise<void> {
-    this.localSide = this.addLocal();
-    while (this.sim.players.size < MAX_PLAYERS) this.addBot();
-    this.state.minigame = "PumpDash";
-    this.state.round = 1;
-    this.state.roundCount = 1;
-    this.syncPlayers();
+    this.physics = await PhysicsWorld.create(PHYS.gravity, STEP);
+    this.buildContext();
+
+    // Lobby parkour while "searching" (the human can move; bots mill around).
+    this.setPlatformEnabled(false);
+    this.lobbyColliders = buildMapColliders(this.physics, lobbyMap());
+
+    this.spawnLocal();
+    while (this.sims.size < MAX_PLAYERS) this.addBot();
+
     this.state.phase = "matchmaking";
     this.phaseTimer = MATCHMAKING_MIN + Math.random() * (MATCHMAKING_MAX - MATCHMAKING_MIN);
     this.state.timer = Math.ceil(this.phaseTimer);
-    this.state.alive = this.sim.players.size;
+    this.state.alive = this.sims.size;
   }
 
   setLocalInput(intent: InputIntent): void {
@@ -84,12 +106,14 @@ export class LocalGameManager {
   }
 
   dispose(): void {
-    this.sim.players.clear();
-    this.sim.balls.length = 0;
+    for (const sim of this.sims.values()) sim.destroy();
+    this.sims.clear();
+    this.physics?.dispose();
   }
 
-  /** Advance by real time, stepped at a fixed 1/30s. */
+  /** Advance the simulation by real time, stepped at a fixed 1/30s. */
   step(dt: number): void {
+    if (!this.physics) return;
     this.acc += Math.min(dt, 0.1);
     while (this.acc >= STEP) {
       this.tick(STEP);
@@ -97,9 +121,10 @@ export class LocalGameManager {
     }
   }
 
-  // --- main loop -----------------------------------------------------------
+  // --- main loop (ported from MatchRoom) -----------------------------------
 
   private tick(dt: number): void {
+    this.simulate(dt);
     this.updateEmotes(dt);
     this.maybeBotEmote(dt);
 
@@ -107,19 +132,23 @@ export class LocalGameManager {
       case "matchmaking":
         this.phaseTimer -= dt;
         this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
-        this.syncPlayers();
-        if (this.phaseTimer <= 0) {
-          this.state.phase = "countdown";
-          this.phaseTimer = COUNTDOWN;
-        }
+        if (this.phaseTimer <= 0) this.startMatch();
         break;
       case "countdown":
         this.phaseTimer -= dt;
         this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
-        this.syncPlayers();
         if (this.phaseTimer <= 0) {
-          this.sim.spawnBalls();
+          this.roundIndex = 0;
+          this.startRound();
+        }
+        break;
+      case "intro":
+        this.phaseTimer -= dt;
+        this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+        if (this.phaseTimer <= 0) {
           this.state.phase = "playing";
+          this.roundElapsed = 0;
+          this.state.roundClock = 0;
         }
         break;
       case "playing":
@@ -132,103 +161,155 @@ export class LocalGameManager {
     }
   }
 
-  private updatePlaying(dt: number): void {
-    const slide = this.localInput.moveX * slideSign(this.localSide);
-    this.sim.setInput(this.localId, slide, this.localInput.jump || this.localInput.action);
-    this.sim.step(dt);
-    this.handleEvents();
-    this.syncPlayers();
-    this.syncEntities();
-    this.state.alive = [...this.sim.players.values()].filter((p) => p.alive).length;
+  private simulate(dt: number): void {
+    const phase = this.state.phase as Phase;
+    const allowRespawn = phase === "matchmaking" || phase === "countdown" || phase === "intro";
+    const playing = phase === "playing";
 
+    for (const [id, sim] of this.sims) {
+      const ai = this.bots.get(id);
+      if (ai) {
+        const plan =
+          playing && this.minigame?.botPlan ? this.minigame.botPlan(id, this.ctx, dt) : { tx: 0, tz: 0 };
+        const intent = ai.think(sim, plan, this.physics, dt, this.botSeq++);
+        sim.setInput(intent);
+        const prev = this.lastAction.get(id) ?? false;
+        if (intent.action && !prev) this.actionEdge.set(id, true);
+        this.lastAction.set(id, intent.action);
+      } else {
+        // The human.
+        sim.setInput(this.localInput);
+        const prev = this.lastAction.get(id) ?? false;
+        if (this.localInput.action && !prev) this.actionEdge.set(id, true);
+        this.lastAction.set(id, this.localInput.action);
+      }
+      sim.preStep(dt);
+    }
+
+    this.physics.step();
+
+    for (const [id, sim] of this.sims) {
+      sim.postStep();
+      if (allowRespawn && sim.fellOff) sim.respawn();
+      const player = this.state.players.get(id);
+      if (!player) continue;
+      const p = sim.position;
+      player.x = p.x;
+      player.y = p.y;
+      player.z = p.z;
+      player.yaw = sim.yaw;
+      player.anim = sim.animState();
+    }
+  }
+
+  private updatePlaying(dt: number): void {
+    if (!this.minigame) return;
+    this.roundElapsed += dt;
+    this.state.roundClock = this.roundElapsed;
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.state.banner = "";
     }
-    if (this.sim.ended) this.endMatch();
-  }
-
-  private handleEvents(): void {
-    for (const ev of this.sim.events) {
-      if (ev.kind === "eliminate") {
-        const p = this.state.players.get(ev.playerId);
-        if (p) {
-          this.state.banner = `${p.name} eliminated`;
-          this.bannerTimer = 2.4;
-        }
+    this.minigame.update(this.ctx, dt);
+    this.state.timer = Math.max(0, Math.ceil(this.minigame.maxDuration - this.roundElapsed));
+    if (this.minigame.isComplete(this.ctx)) {
+      this.awardPoints();
+      if (this.roundIndex >= this.roundPlan.length - 1) this.endMatch();
+      else {
+        this.roundIndex += 1;
+        this.startRound();
       }
     }
   }
 
-  // --- sync sim -> schema --------------------------------------------------
+  // --- transitions ---------------------------------------------------------
 
-  private syncPlayers(): void {
-    for (const sp of this.sim.players.values()) {
-      const p = this.state.players.get(sp.id);
-      if (!p) continue;
-      const w = sideWorld(sp.side, sp.t);
-      p.x = w.x;
-      p.y = 0;
-      p.z = w.z;
-      p.yaw = faceYaw(sp.side);
-      p.side = sp.side;
-      p.points = sp.points;
-      p.alive = sp.alive;
-      p.dashCd = sp.dashCd;
-      if (this.state.phase === "ended") continue;
-      p.anim = !sp.alive ? "lose" : Math.abs(sp.vt) > 0.6 ? "run" : "idle";
-    }
+  private startMatch(): void {
+    removeColliders(this.physics, this.lobbyColliders);
+    this.lobbyColliders = [];
+    this.setPlatformEnabled(true);
+    this.roundPlan = buildRoundPlan(this.sims.size);
+    this.state.roundCount = this.roundPlan.length;
+    this.state.phase = "countdown";
+    this.phaseTimer = COUNTDOWN;
+    this.state.alive = this.sims.size;
   }
 
-  private syncEntities(): void {
-    const balls = this.sim.balls;
-    const obs = this.sim.obstacles;
-    const total = balls.length + obs.length;
-    const ents = this.state.entities;
-    while (ents.length < total) ents.push(new EntityState());
-    while (ents.length > total) ents.pop();
-    for (let i = 0; i < balls.length; i++) {
-      const e = ents[i]!;
-      e.kind = "ball";
-      e.x = balls[i]!.x;
-      e.y = BALL_Y;
-      e.z = balls[i]!.z;
-      e.active = true;
-      e.variant = 0;
-    }
-    for (let j = 0; j < obs.length; j++) {
-      const e = ents[balls.length + j]!;
-      const o = obs[j]!;
-      e.kind = "obstacle";
-      e.x = o.x;
-      e.y = 0.1;
-      e.z = o.z;
-      e.active = true;
-      e.variant = PumpDashSim.isSolid(o) ? 1 : 0;
+  private startRound(): void {
+    this.minigame?.teardown(this.ctx);
+    this.clearEntities();
+    const idx = Math.min(this.roundIndex, this.roundPlan.length - 1);
+    this.minigame = this.roundPlan[idx]!;
+    this.roundElapsed = 0;
+    this.state.roundClock = 0;
+    this.state.round = this.roundIndex + 1;
+    this.state.players.forEach((p) => {
+      p.roundScore = 0;
+      p.team = -1;
+    });
+    this.state.banner = "";
+    this.bannerTimer = 0;
+    this.actionEdge.clear();
+    this.lastAction.clear();
+    this.minigame.setup(this.ctx);
+    this.state.phase = "intro";
+    this.phaseTimer = INTRO_TIME;
+  }
+
+  /** Turn the round's scores into placement points (tie-aware; zero for zero). */
+  private awardPoints(): void {
+    const positives = [...this.sims.keys()]
+      .filter((id) => (this.state.players.get(id)?.roundScore ?? 0) > 0)
+      .sort(
+        (a, b) =>
+          (this.state.players.get(b)?.roundScore ?? 0) - (this.state.players.get(a)?.roundScore ?? 0),
+      );
+    const ptsAt = (rank: number): number => PLACE_POINTS[Math.min(rank, PLACE_POINTS.length - 1)] ?? 0;
+    let i = 0;
+    while (i < positives.length) {
+      const score = this.state.players.get(positives[i]!)?.roundScore ?? 0;
+      let j = i;
+      while (j < positives.length && (this.state.players.get(positives[j]!)?.roundScore ?? 0) === score) {
+        j++;
+      }
+      let sum = 0;
+      for (let r = i; r < j; r++) sum += ptsAt(r);
+      const avg = Math.round(sum / (j - i));
+      for (let r = i; r < j; r++) {
+        const p = this.state.players.get(positives[r]!);
+        if (p) p.points += avg;
+      }
+      i = j;
     }
   }
 
   private endMatch(): void {
+    this.minigame?.teardown(this.ctx);
+    this.minigame = null;
+    this.clearEntities();
     this.state.phase = "ended";
     this.phaseTimer = END_SCREEN;
-    const ranked = this.sim.ranking();
+
+    const ranked = [...this.state.players.keys()].sort(
+      (a, b) => (this.state.players.get(b)?.points ?? 0) - (this.state.players.get(a)?.points ?? 0),
+    );
     ranked.forEach((id, rank) => {
       const p = this.state.players.get(id);
       if (!p) return;
       p.placement = rank + 1;
       p.anim = rank === 0 ? "win" : "lose";
     });
-    const winnerId = this.sim.winnerId ?? ranked[0];
+    const winnerId = ranked[0];
     if (winnerId) {
-      const w = this.state.players.get(winnerId);
-      if (w) {
+      const winner = this.state.players.get(winnerId);
+      if (winner) {
         this.state.winnerId = winnerId;
-        this.state.winnerName = w.name;
+        this.state.winnerName = winner.name;
       }
     }
-    this.clearEntities();
-    this.state.alive = [...this.sim.players.values()].filter((p) => p.alive).length;
+    this.state.alive = this.sims.size;
 
+    // Fold this match into the simulated leaderboard (offline; no real funds).
     if (!this.recorded) {
       this.recorded = true;
       const me = this.state.players.get(this.localId);
@@ -236,33 +317,40 @@ export class LocalGameManager {
     }
   }
 
-  // --- spawning ------------------------------------------------------------
+  // --- spawning / helpers (ported) ----------------------------------------
 
-  private addLocal(): number {
-    const side = this.sim.addPlayer(this.localId, false);
-    const p = new PlayerState();
-    p.name = this.opts.name || "You";
-    p.wallet = this.opts.wallet ?? "";
-    p.character = isValidCharacter(this.opts.character) ? this.opts.character : "knight";
-    p.colorIndex = this.colorCounter++;
-    p.side = side;
-    p.points = START_POINTS;
-    this.state.players.set(this.localId, p);
-    return side;
+  private spawnLocal(): void {
+    const spawn = lobbyMap().spawns[0] ?? { x: 0, y: 2, z: 6 };
+    this.sims.set(this.localId, new PlayerSim(this.physics, spawn));
+    const player = new PlayerState();
+    player.name = this.opts.name || "You";
+    player.wallet = this.opts.wallet ?? "";
+    player.character = isValidCharacter(this.opts.character) ? this.opts.character : "knight";
+    player.colorIndex = this.colorCounter++;
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.z = spawn.z;
+    this.state.players.set(this.localId, player);
+    this.spawnCounter++;
   }
 
   private addBot(): void {
     const id = `bot-${++this.botCounter}`;
-    const side = this.sim.addPlayer(id, true);
-    const p = new PlayerState();
-    p.name = pickBotName(this.takenNames());
-    p.isBot = true;
-    p.wallet = randomWallet();
-    p.character = CHARACTER_IDS[this.botCounter % CHARACTER_IDS.length]!;
-    p.colorIndex = this.colorCounter++;
-    p.side = side;
-    p.points = START_POINTS;
-    this.state.players.set(id, p);
+    const spawn = spawnPoint(this.spawnCounter++, MAX_PLAYERS);
+    this.sims.set(id, new PlayerSim(this.physics, spawn));
+    this.bots.set(id, new BotController());
+    this.botOrder.set(id, this.botOrder.size);
+
+    const player = new PlayerState();
+    player.name = pickBotName(this.takenNames());
+    player.isBot = true;
+    player.wallet = randomWallet();
+    player.character = CHARACTER_IDS[this.botCounter % CHARACTER_IDS.length]!;
+    player.colorIndex = this.colorCounter++;
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.z = spawn.z;
+    this.state.players.set(id, player);
   }
 
   private takenNames(): Set<string> {
@@ -270,8 +358,6 @@ export class LocalGameManager {
     this.state.players.forEach((p) => taken.add(p.name));
     return taken;
   }
-
-  // --- emotes / helpers ----------------------------------------------------
 
   private showEmote(id: string, emoteId: number): void {
     const player = this.state.players.get(id);
@@ -282,9 +368,9 @@ export class LocalGameManager {
 
   private maybeBotEmote(dt: number): void {
     if (this.state.phase !== "playing" && this.state.phase !== "matchmaking") return;
-    for (const sp of this.sim.players.values()) {
-      if (!sp.isBot || this.emoteTimers.has(sp.id)) continue;
-      if (Math.random() < dt / 45) this.showEmote(sp.id, Math.floor(Math.random() * EMOTES.length));
+    for (const id of this.bots.keys()) {
+      if (this.emoteTimers.has(id)) continue;
+      if (Math.random() < dt / 40) this.showEmote(id, Math.floor(Math.random() * EMOTES.length));
     }
   }
 
@@ -303,5 +389,63 @@ export class LocalGameManager {
 
   private clearEntities(): void {
     if (this.state.entities.length > 0) this.state.entities.splice(0, this.state.entities.length);
+  }
+
+  private setPlatformEnabled(enabled: boolean): void {
+    if (enabled && !this.platformCollider) {
+      this.platformCollider = this.physics.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(
+          ARENA.platformHalf,
+          ARENA.platformThickness / 2,
+          ARENA.platformHalf,
+        ).setTranslation(0, -ARENA.platformThickness / 2, 0),
+      );
+    } else if (!enabled && this.platformCollider) {
+      this.physics.world.removeCollider(this.platformCollider, false);
+      this.platformCollider = null;
+    }
+  }
+
+  /** The exact MinigameContext from MatchRoom, backed by local state. */
+  private buildContext(): void {
+    this.ctx = {
+      physics: this.physics,
+      state: this.state,
+      sims: this.sims,
+      players: () => [...this.sims.keys()],
+      addScore: (id, delta) => {
+        const p = this.state.players.get(id);
+        if (p) p.roundScore += delta;
+      },
+      setScore: (id, score) => {
+        const p = this.state.players.get(id);
+        if (p) p.roundScore = score;
+      },
+      getScore: (id) => this.state.players.get(id)?.roundScore ?? 0,
+      consumeAction: (id) => {
+        const v = this.actionEdge.get(id) ?? false;
+        if (v) this.actionEdge.set(id, false);
+        return v;
+      },
+      actionHeld: (id) => this.lastAction.get(id) ?? false,
+      facing: (id) => {
+        const yaw = this.sims.get(id)?.yaw ?? 0;
+        return { x: Math.sin(yaw), z: Math.cos(yaw) };
+      },
+      aim: (id) => this.sims.get(id)?.aim ?? { x: 0, z: 1 },
+      addEntity: (kind, variant = 0) => {
+        const e = new EntityState();
+        e.kind = kind;
+        e.variant = variant;
+        this.state.entities.push(e);
+        return e;
+      },
+      setPlatformEnabled: (enabled) => this.setPlatformEnabled(enabled),
+      setBanner: (text) => {
+        this.state.banner = text;
+        this.bannerTimer = 2.6;
+      },
+      botIndex: (id) => this.botOrder.get(id) ?? 0,
+    };
   }
 }

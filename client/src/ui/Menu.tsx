@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Leaderboard } from "./Leaderboard";
-import { CaBadge } from "./CaBadge";
 import { Online } from "./Hud";
 import { sound } from "../core/Sound";
 import { getPlayerName, isValidPlayerName, setPlayerName } from "../game/name";
@@ -17,7 +16,6 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
   const [name, setName] = useState(getPlayerName());
   const [wallet, setWallet] = useState(getPlayerWallet());
   const [code, setCode] = useState("");
-  const [howTo, setHowTo] = useState(false);
   const nameOk = isValidPlayerName(name);
   const walletOk = isValidWallet(wallet);
   const canPlay = nameOk && walletOk;
@@ -43,9 +41,8 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
   return (
     <div className="screen menu-screen">
       <div className="menu-hero">
-        <h1 className="game-title">Pump Crash</h1>
-        <p className="game-sub">4 players, one arena. Block the ball. Last one standing wins.</p>
-        <CaBadge />
+        <h1 className="game-title">BNB Guys Game</h1>
+        <p className="game-sub">4 players. 4 minigames. Highest points wins.</p>
         <Online />
 
         <div className="name-row">
@@ -121,24 +118,6 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
             ? "Quick play matches you with players + bots. Create a private game to get a code to share with friends."
             : "Jump into a match with players from around the world."}
         </p>
-
-        <button className="link-btn" onClick={() => setHowTo((v) => !v)}>
-          {howTo ? "Hide how to play" : "How to play"}
-        </button>
-
-        {howTo && (
-          <div className="howto-card">
-            <div className="howto-title">How to play Pump Crash</div>
-            <ul className="howto-list">
-              <li>You guard one side of the arena.</li>
-              <li>Slide along your side with A / D or the arrow keys.</li>
-              <li>Block the ball so it does not pass your edge.</li>
-              <li>Press Space to dash and smack the ball harder.</li>
-              <li>Every ball that gets past you costs a point.</li>
-              <li>Run out of points and you are out. Last one standing wins.</li>
-            </ul>
-          </div>
-        )}
       </div>
       <Leaderboard />
     </div>

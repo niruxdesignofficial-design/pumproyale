@@ -1,31 +1,36 @@
 import { Room, type Client } from "@colyseus/core";
+import RAPIER from "@dimforge/rapier3d-compat";
 import {
+  ARENA,
   CHARACTER_IDS,
   EMOTE_MESSAGE,
   EMOTES,
   INPUT_MESSAGE,
   MAX_PLAYERS,
+  PHYS,
+  PLACE_POINTS,
   TICK_RATE,
   isValidCharacter,
+  lobbyMap,
+  spawnPoint,
   type InputIntent,
   type JoinOptions,
 } from "@party-royale/shared";
+import { PhysicsWorld } from "../physics/PhysicsWorld";
+import { PlayerSim } from "../physics/PlayerSim";
+import { BotController } from "../ai/BotController";
+import { buildRoundPlan } from "../match/MinigameRegistry";
+import { buildMapColliders, removeColliders } from "../match/mapColliders";
+import type { IMinigame, MinigameContext } from "../match/IMinigame";
 import { recordMatchResult, type Participant } from "../services/leaderboard";
-import {
-  PumpDashSim,
-  START_POINTS,
-  faceYaw,
-  sideWorld,
-  slideSign,
-} from "../pumpdash/PumpDashSim";
 import { EntityState, MatchState, PlayerState } from "./schema";
 
-/** Lobby fill window once the first human joins (seconds). */
-const FILL_WAIT = 14;
+/** Lobby fill window once the first human joins (seconds) — long enough to warm up. */
+const FILL_WAIT = 16;
 const COUNTDOWN = 4;
-const END_SCREEN = 12;
+const INTRO_TIME = 3.5;
+const END_SCREEN = 14;
 const MIN_HUMANS = 1;
-const BALL_Y = 0.7;
 /** Generous cap above the ~30 Hz client send rate; excess input is dropped. */
 const MAX_INPUTS_PER_SECOND = 90;
 
@@ -36,48 +41,106 @@ const BOT_NAMES = [
   "Sam", "Ivy", "Dylan", "Maya", "Jack", "Nina", "Milo", "Ella", "Axel", "Vera",
 ];
 
-type Phase = "waiting" | "countdown" | "playing" | "ended";
-
-interface PlayerInput {
-  slide: number;
-  dash: boolean;
-}
+type Phase = "waiting" | "countdown" | "intro" | "playing" | "ended";
 
 /**
- * Authoritative PumpDash room. A square arena with four sides; each player guards
- * one side and slides only along their edge. A ball that passes an alive player's
- * edge costs them a point; reaching zero eliminates them. Last player alive wins.
- * Clients only send input intents; all scoring is decided here.
+ * Authoritative match room. Everyone plays every minigame in order; each round
+ * awards placement points by the players' round scores, and the highest total
+ * across all rounds wins. There is no elimination — every player plays to the
+ * end. All scoring, round transitions, and the winner are decided here; clients
+ * only send input intents.
  */
 export class MatchRoom extends Room<MatchState> {
   override maxClients = MAX_PLAYERS;
 
-  private readonly sim = new PumpDashSim();
-  private readonly inputs = new Map<string, PlayerInput>();
+  private physics!: PhysicsWorld;
+  private readonly sims = new Map<string, PlayerSim>();
+  private readonly bots = new Map<string, BotController>();
   private readonly inputRate = new Map<string, { windowStart: number; count: number }>();
+  private readonly actionEdge = new Map<string, boolean>();
+  private readonly lastAction = new Map<string, boolean>();
+  private readonly botOrder = new Map<string, number>();
+  /** Seconds left to show each player's current emote (cleared at 0). */
   private readonly emoteTimers = new Map<string, number>();
-
-  private botCounter = 0;
-  private colorCounter = 0;
-  private fillTimer = FILL_WAIT;
-  private phaseTimer = 0;
-  private matchClock = 0;
+  private ctx!: MinigameContext;
+  private platformCollider: RAPIER.Collider | null = null;
+  private lobbyColliders: RAPIER.Collider[] = [];
   private bannerTimer = 0;
 
-  override onCreate(options?: JoinOptions): void {
+  private spawnCounter = 0;
+  private botCounter = 0;
+  private botSeq = 0;
+  private colorCounter = 0;
+
+  private fillTimer = FILL_WAIT;
+  private phaseTimer = 0;
+  private roundIndex = 0;
+  private roundElapsed = 0;
+  private matchClock = 0;
+  private minigame: IMinigame | null = null;
+  private roundPlan: IMinigame[] = [];
+
+  override async onCreate(options?: JoinOptions): Promise<void> {
     this.state = new MatchState();
     this.state.phase = "waiting";
-    this.state.minigame = "PumpDash";
-    this.state.round = 1;
-    this.state.roundCount = 1;
+
+    // Private rooms (created via a shared code) are not matched by quick play;
+    // friends join them with `joinById(roomId)`.
     if (options?.private) this.setPrivate(true);
+
+    this.physics = await PhysicsWorld.create(PHYS.gravity, 1 / TICK_RATE);
+    // The lobby is a small playable parkour while waiting for players.
+    this.setPlatformEnabled(false);
+    this.lobbyColliders = buildMapColliders(this.physics, lobbyMap());
+
+    this.ctx = {
+      physics: this.physics,
+      state: this.state,
+      sims: this.sims,
+      players: () => [...this.sims.keys()],
+      addScore: (id, delta) => {
+        const p = this.state.players.get(id);
+        if (p) p.roundScore += delta;
+      },
+      setScore: (id, score) => {
+        const p = this.state.players.get(id);
+        if (p) p.roundScore = score;
+      },
+      getScore: (id) => this.state.players.get(id)?.roundScore ?? 0,
+      consumeAction: (id) => {
+        const v = this.actionEdge.get(id) ?? false;
+        if (v) this.actionEdge.set(id, false);
+        return v;
+      },
+      actionHeld: (id) => this.lastAction.get(id) ?? false,
+      facing: (id) => {
+        const yaw = this.sims.get(id)?.yaw ?? 0;
+        return { x: Math.sin(yaw), z: Math.cos(yaw) };
+      },
+      aim: (id) => this.sims.get(id)?.aim ?? { x: 0, z: 1 },
+      addEntity: (kind, variant = 0) => {
+        const e = new EntityState();
+        e.kind = kind;
+        e.variant = variant;
+        this.state.entities.push(e);
+        return e;
+      },
+      setPlatformEnabled: (enabled) => this.setPlatformEnabled(enabled),
+      setBanner: (text) => {
+        this.state.banner = text;
+        this.bannerTimer = 2.6;
+      },
+      botIndex: (id) => this.botOrder.get(id) ?? 0,
+    };
 
     this.onMessage(INPUT_MESSAGE, (client, message: InputIntent) => {
       if (this.state.phase === "ended") return;
-      if (!this.allowInput(client.sessionId)) return;
-      const slide = clamp1(message?.moveX);
-      const dash = Boolean(message?.jump) || Boolean(message?.action);
-      this.inputs.set(client.sessionId, { slide, dash });
+      if (!this.allowInput(client.sessionId)) return; // rate limit / anti-flood
+      const input = sanitizeInput(message);
+      this.sims.get(client.sessionId)?.setInput(input);
+      const prev = this.lastAction.get(client.sessionId) ?? false;
+      if (input.action && !prev) this.actionEdge.set(client.sessionId, true);
+      this.lastAction.set(client.sessionId, input.action);
     });
 
     this.onMessage(EMOTE_MESSAGE, (client, message: { id?: number }) => {
@@ -89,60 +152,136 @@ export class MatchRoom extends Room<MatchState> {
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), 1000 / TICK_RATE);
   }
 
+  /** Show a player's emote above their avatar for a couple seconds. */
+  private showEmote(id: string, emoteId: number): void {
+    const player = this.state.players.get(id);
+    if (!player) return;
+    player.emote = EMOTES[emoteId]!;
+    this.emoteTimers.set(id, 2.5);
+  }
+
+  /** Occasionally let an idle bot emote, so the lobby/match feels alive. */
+  private maybeBotEmote(dt: number): void {
+    if (this.state.phase !== "playing" && this.state.phase !== "waiting") return;
+    for (const id of this.bots.keys()) {
+      if (this.emoteTimers.has(id)) continue;
+      // ~ once every ~40s per bot on average.
+      if (Math.random() < dt / 40) this.showEmote(id, Math.floor(Math.random() * EMOTES.length));
+    }
+  }
+
+  /** Tick down active emotes and clear expired ones. */
+  private updateEmotes(dt: number): void {
+    for (const [id, t] of this.emoteTimers) {
+      const next = t - dt;
+      if (next <= 0) {
+        this.emoteTimers.delete(id);
+        const p = this.state.players.get(id);
+        if (p) p.emote = "";
+      } else {
+        this.emoteTimers.set(id, next);
+      }
+    }
+  }
+
   override onJoin(client: Client, options?: JoinOptions): void {
-    const side = this.sim.addPlayer(client.sessionId, false);
+    // Spawn humans on the lobby parkour (they can run it while waiting).
+    const lobbySpawns = lobbyMap().spawns;
+    const spawn = lobbySpawns[this.spawnCounter++ % lobbySpawns.length]!;
+    this.sims.set(client.sessionId, new PlayerSim(this.physics, spawn));
+
     const player = new PlayerState();
-    player.name = sanitizeName(options?.name) ?? `Player-${this.sim.players.size}`;
+    player.name = sanitizeName(options?.name) ?? `Player-${this.spawnCounter}`;
     player.wallet = typeof options?.wallet === "string" ? options.wallet.slice(0, 64) : "";
     player.character = isValidCharacter(options?.character) ? options.character : "knight";
     player.colorIndex = this.colorCounter++;
-    player.side = side;
-    player.points = START_POINTS;
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.z = spawn.z;
     this.state.players.set(client.sessionId, player);
-    this.placePaddle(client.sessionId);
-    this.state.alive = this.sim.players.size;
-    console.log(`[match ${this.roomId}] join ${client.sessionId} (${player.name}) side ${side}`);
+    this.state.alive = this.sims.size;
+
+    console.log(`[match ${this.roomId}] join ${client.sessionId} (${player.name})`);
   }
 
   override onLeave(client: Client): void {
-    this.sim.removePlayer(client.sessionId);
-    this.inputs.delete(client.sessionId);
-    this.inputRate.delete(client.sessionId);
-    this.emoteTimers.delete(client.sessionId);
+    this.removeSim(client.sessionId);
     this.state.players.delete(client.sessionId);
-    this.state.alive = this.sim.players.size;
+    this.emoteTimers.delete(client.sessionId);
+    this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] leave ${client.sessionId}`);
+  }
+
+  override onDispose(): void {
+    this.physics?.dispose();
   }
 
   // --- main loop -----------------------------------------------------------
 
   private update(deltaMs: number): void {
     const dt = deltaMs / 1000;
+    this.simulate(dt);
     this.updateEmotes(dt);
     this.maybeBotEmote(dt);
 
     switch (this.state.phase as Phase) {
       case "waiting":
         this.updateWaiting(dt);
-        this.syncPlayers();
         break;
       case "countdown":
-        this.phaseTimer -= dt;
-        this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
-        this.syncPlayers();
-        if (this.phaseTimer <= 0) {
-          this.sim.spawnBalls();
-          this.state.phase = "playing";
-        }
+        this.updateCountdown(dt);
+        break;
+      case "intro":
+        this.updateIntro(dt);
         break;
       case "playing":
         this.updatePlaying(dt);
         break;
       case "ended":
-        this.phaseTimer -= dt;
-        this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
-        if (this.phaseTimer <= 0) void this.disconnect();
+        this.updateEnded(dt);
         break;
+    }
+  }
+
+  /** Step physics for all sims and publish transforms. */
+  private simulate(dt: number): void {
+    const allowRespawn =
+      this.state.phase === "waiting" ||
+      this.state.phase === "countdown" ||
+      this.state.phase === "intro";
+
+    const playing = this.state.phase === "playing";
+    for (const [id, sim] of this.sims) {
+      const ai = this.bots.get(id);
+      if (ai) {
+        const plan =
+          playing && this.minigame?.botPlan
+            ? this.minigame.botPlan(id, this.ctx, dt)
+            : { tx: 0, tz: 0 };
+        const intent = ai.think(sim, plan, this.physics, dt, this.botSeq++);
+        sim.setInput(intent);
+        // Bots get the same action-edge treatment as human input.
+        const prev = this.lastAction.get(id) ?? false;
+        if (intent.action && !prev) this.actionEdge.set(id, true);
+        this.lastAction.set(id, intent.action);
+      }
+      sim.preStep(dt);
+    }
+
+    this.physics.step();
+
+    for (const [id, sim] of this.sims) {
+      sim.postStep();
+      if (allowRespawn && sim.fellOff) sim.respawn();
+
+      const player = this.state.players.get(id);
+      if (!player) continue;
+      const p = sim.position;
+      player.x = p.x;
+      player.y = p.y;
+      player.z = p.z;
+      player.yaw = sim.yaw;
+      player.anim = sim.animState();
     }
   }
 
@@ -155,55 +294,146 @@ export class MatchRoom extends Room<MatchState> {
     }
     this.fillTimer -= dt;
     this.state.timer = Math.max(0, Math.ceil(this.fillTimer));
-    if (humans >= MAX_PLAYERS || this.fillTimer <= 0) this.startCountdown();
+    if (humans >= MAX_PLAYERS || this.fillTimer <= 0) this.startMatch();
   }
 
-  private startCountdown(): void {
-    this.lock();
-    this.autoDispose = false;
-    while (this.sim.players.size < MAX_PLAYERS) this.addBot();
-    this.state.phase = "countdown";
-    this.phaseTimer = COUNTDOWN;
-    this.state.alive = this.sim.players.size;
-    console.log(`[match ${this.roomId}] starting with ${this.sim.players.size} players`);
+  private updateCountdown(dt: number): void {
+    this.phaseTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+    if (this.phaseTimer <= 0) {
+      this.roundIndex = 0;
+      this.startRound(); // enters the "intro" phase
+    }
+  }
+
+  private updateIntro(dt: number): void {
+    this.phaseTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+    if (this.phaseTimer <= 0) {
+      this.state.phase = "playing";
+      this.roundElapsed = 0;
+      this.state.roundClock = 0;
+    }
   }
 
   private updatePlaying(dt: number): void {
-    for (const p of this.sim.players.values()) {
-      if (p.isBot) continue;
-      const inp = this.inputs.get(p.id);
-      this.sim.setInput(p.id, (inp?.slide ?? 0) * slideSign(p.side), inp?.dash ?? false);
-    }
-    this.sim.step(dt);
+    if (!this.minigame) return;
+    this.roundElapsed += dt;
     this.matchClock += dt;
-    this.handleEvents();
-    this.syncPlayers();
-    this.syncEntities();
-    this.state.alive = [...this.sim.players.values()].filter((p) => p.alive).length;
-
+    this.state.roundClock = this.roundElapsed;
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.state.banner = "";
     }
-    if (this.sim.ended) this.endMatch();
+
+    this.minigame.update(this.ctx, dt);
+    this.state.timer = Math.max(0, Math.ceil(this.minigame.maxDuration - this.roundElapsed));
+
+    if (this.minigame.isComplete(this.ctx)) {
+      this.awardPoints();
+      if (this.roundIndex >= this.roundPlan.length - 1) this.endMatch();
+      else this.nextRound();
+    }
   }
 
-  private handleEvents(): void {
-    for (const ev of this.sim.events) {
-      if (ev.kind === "eliminate") {
-        const p = this.state.players.get(ev.playerId);
-        if (p) {
-          this.state.banner = `${p.name} eliminated`;
-          this.bannerTimer = 2.4;
-        }
+  private updateEnded(dt: number): void {
+    this.phaseTimer -= dt;
+    this.state.timer = Math.max(0, Math.ceil(this.phaseTimer));
+    if (this.phaseTimer <= 0) void this.disconnect();
+  }
+
+  // --- transitions ---------------------------------------------------------
+
+  private startMatch(): void {
+    this.lock();
+    this.autoDispose = false;
+    this.matchClock = 0;
+    // Tear down the lobby parkour; restore the base platform for the countdown.
+    removeColliders(this.physics, this.lobbyColliders);
+    this.lobbyColliders = [];
+    this.setPlatformEnabled(true);
+    while (this.sims.size < MAX_PLAYERS) this.addBot();
+    this.roundPlan = buildRoundPlan(this.sims.size);
+    this.state.roundCount = this.roundPlan.length;
+    this.state.phase = "countdown";
+    this.phaseTimer = COUNTDOWN;
+    this.state.alive = this.sims.size;
+    console.log(`[match ${this.roomId}] starting with ${this.sims.size} players`);
+  }
+
+  private startRound(): void {
+    this.minigame?.teardown(this.ctx);
+    this.clearEntities();
+    const idx = Math.min(this.roundIndex, this.roundPlan.length - 1);
+    this.minigame = this.roundPlan[idx]!;
+    this.roundElapsed = 0;
+    this.state.roundClock = 0;
+    this.state.round = this.roundIndex + 1;
+    // Fresh round: everyone starts at zero score / no team, banner cleared.
+    this.state.players.forEach((p) => {
+      p.roundScore = 0;
+      p.team = -1;
+    });
+    this.state.banner = "";
+    this.bannerTimer = 0;
+    this.actionEdge.clear();
+    this.lastAction.clear();
+    this.minigame.setup(this.ctx);
+    this.state.phase = "intro";
+    this.phaseTimer = INTRO_TIME;
+    console.log(`[match ${this.roomId}] round ${this.state.round}: ${this.minigame.name}`);
+  }
+
+  private nextRound(): void {
+    this.roundIndex += 1;
+    this.startRound();
+  }
+
+  /**
+   * Turn this round's scores into placement points. Players who scored nothing
+   * (roundScore <= 0) get 0; the rest are ranked by score, and tied scores split
+   * the averaged points for the ranks they span (so teammates with an equal team
+   * score get equal points, and climb non-finishers get nothing).
+   */
+  private awardPoints(): void {
+    const positives = [...this.sims.keys()]
+      .filter((id) => (this.state.players.get(id)?.roundScore ?? 0) > 0)
+      .sort(
+        (a, b) =>
+          (this.state.players.get(b)?.roundScore ?? 0) -
+          (this.state.players.get(a)?.roundScore ?? 0),
+      );
+    const ptsAt = (rank: number): number => PLACE_POINTS[Math.min(rank, PLACE_POINTS.length - 1)] ?? 0;
+    let i = 0;
+    while (i < positives.length) {
+      const score = this.state.players.get(positives[i]!)?.roundScore ?? 0;
+      let j = i;
+      while (j < positives.length && (this.state.players.get(positives[j]!)?.roundScore ?? 0) === score) {
+        j++;
       }
+      // Ranks [i, j) tie: each gets the average of their placement points.
+      let sum = 0;
+      for (let r = i; r < j; r++) sum += ptsAt(r);
+      const avg = Math.round(sum / (j - i));
+      for (let r = i; r < j; r++) {
+        const p = this.state.players.get(positives[r]!);
+        if (p) p.points += avg;
+      }
+      i = j;
     }
   }
 
   private endMatch(): void {
+    this.minigame?.teardown(this.ctx);
+    this.minigame = null;
+    this.clearEntities();
     this.state.phase = "ended";
     this.phaseTimer = END_SCREEN;
-    const ranked = this.sim.ranking();
+
+    // Final placement by total points.
+    const ranked = [...this.state.players.keys()].sort(
+      (a, b) => (this.state.players.get(b)?.points ?? 0) - (this.state.players.get(a)?.points ?? 0),
+    );
     let winnerWallet: string | null = null;
     ranked.forEach((id, rank) => {
       const p = this.state.players.get(id);
@@ -211,7 +441,7 @@ export class MatchRoom extends Room<MatchState> {
       p.placement = rank + 1;
       p.anim = rank === 0 ? "win" : "lose";
     });
-    const winnerId = this.sim.winnerId ?? ranked[0];
+    const winnerId = ranked[0];
     if (winnerId) {
       const winner = this.state.players.get(winnerId);
       if (winner) {
@@ -220,7 +450,7 @@ export class MatchRoom extends Room<MatchState> {
         if (!winner.isBot && winner.wallet) winnerWallet = winner.wallet;
       }
     }
-    this.clearEntities();
+    this.state.alive = this.sims.size;
     console.log(`[match ${this.roomId}] winner: ${this.state.winnerName || "(none)"}`);
 
     const participants: Participant[] = [];
@@ -236,80 +466,27 @@ export class MatchRoom extends Room<MatchState> {
     }
   }
 
-  // --- sync sim -> schema --------------------------------------------------
-
-  private syncPlayers(): void {
-    for (const sp of this.sim.players.values()) {
-      const p = this.state.players.get(sp.id);
-      if (!p) continue;
-      const w = sideWorld(sp.side, sp.t);
-      p.x = w.x;
-      p.y = 0;
-      p.z = w.z;
-      p.yaw = faceYaw(sp.side);
-      p.side = sp.side;
-      p.points = sp.points;
-      p.alive = sp.alive;
-      p.dashCd = sp.dashCd;
-      if (this.state.phase === "ended") continue;
-      p.anim = !sp.alive ? "lose" : Math.abs(sp.vt) > 0.6 ? "run" : "idle";
-    }
-  }
-
-  private placePaddle(id: string): void {
-    const sp = this.sim.players.get(id);
-    const p = this.state.players.get(id);
-    if (!sp || !p) return;
-    const w = sideWorld(sp.side, sp.t);
-    p.x = w.x;
-    p.z = w.z;
-    p.yaw = faceYaw(sp.side);
-  }
-
-  private syncEntities(): void {
-    const balls = this.sim.balls;
-    const obs = this.sim.obstacles;
-    const total = balls.length + obs.length;
-    const ents = this.state.entities;
-    while (ents.length < total) ents.push(new EntityState());
-    while (ents.length > total) ents.pop();
-    for (let i = 0; i < balls.length; i++) {
-      const e = ents[i]!;
-      e.kind = "ball";
-      e.x = balls[i]!.x;
-      e.y = BALL_Y;
-      e.z = balls[i]!.z;
-      e.active = true;
-      e.variant = 0;
-    }
-    for (let j = 0; j < obs.length; j++) {
-      const e = ents[balls.length + j]!;
-      const o = obs[j]!;
-      e.kind = "obstacle";
-      e.x = o.x;
-      e.y = 0.1;
-      e.z = o.z;
-      e.active = true;
-      e.variant = PumpDashSim.isSolid(o) ? 1 : 0;
-    }
-  }
-
   // --- helpers -------------------------------------------------------------
 
   private addBot(): void {
     const id = `bot-${++this.botCounter}`;
-    const side = this.sim.addPlayer(id, true);
+    const spawn = spawnPoint(this.spawnCounter++, MAX_PLAYERS);
+    this.sims.set(id, new PlayerSim(this.physics, spawn));
+    this.bots.set(id, new BotController());
+    this.botOrder.set(id, this.botOrder.size);
+
     const player = new PlayerState();
     player.name = this.pickBotName();
     player.isBot = true;
     player.character = CHARACTER_IDS[this.botCounter % CHARACTER_IDS.length]!;
     player.colorIndex = this.colorCounter++;
-    player.side = side;
-    player.points = START_POINTS;
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.z = spawn.z;
     this.state.players.set(id, player);
-    this.placePaddle(id);
   }
 
+  /** A human-looking name not already used by a player in this room. */
   private pickBotName(): string {
     const taken = new Set<string>();
     this.state.players.forEach((p) => taken.add(p.name));
@@ -319,38 +496,25 @@ export class MatchRoom extends Room<MatchState> {
     return `${base}${Math.floor(Math.random() * 90) + 10}`;
   }
 
-  private showEmote(id: string, emoteId: number): void {
-    const player = this.state.players.get(id);
-    if (!player) return;
-    player.emote = EMOTES[emoteId]!;
-    this.emoteTimers.set(id, 2.5);
-  }
-
-  private maybeBotEmote(dt: number): void {
-    if (this.state.phase !== "playing" && this.state.phase !== "waiting") return;
-    for (const sp of this.sim.players.values()) {
-      if (!sp.isBot || this.emoteTimers.has(sp.id)) continue;
-      if (Math.random() < dt / 45) this.showEmote(sp.id, Math.floor(Math.random() * EMOTES.length));
-    }
-  }
-
-  private updateEmotes(dt: number): void {
-    for (const [id, t] of this.emoteTimers) {
-      const next = t - dt;
-      if (next <= 0) {
-        this.emoteTimers.delete(id);
-        const p = this.state.players.get(id);
-        if (p) p.emote = "";
-      } else {
-        this.emoteTimers.set(id, next);
-      }
-    }
-  }
-
   private clearEntities(): void {
     if (this.state.entities.length > 0) this.state.entities.splice(0, this.state.entities.length);
   }
 
+  private removeSim(id: string): void {
+    this.sims.get(id)?.destroy();
+    this.sims.delete(id);
+    this.bots.delete(id);
+    this.botOrder.delete(id);
+    this.inputRate.delete(id);
+    this.actionEdge.delete(id);
+    this.lastAction.delete(id);
+  }
+
+  /**
+   * Per-client input rate limit. Clients sample at ~30 Hz; anything well above
+   * that is dropped to blunt flooding. Sanitization plus this cap means a client
+   * cannot move the simulation in ways the server does not allow.
+   */
   private allowInput(sessionId: string): boolean {
     const now = Date.now();
     const entry = this.inputRate.get(sessionId);
@@ -361,11 +525,40 @@ export class MatchRoom extends Room<MatchState> {
     entry.count += 1;
     return entry.count <= MAX_INPUTS_PER_SECOND;
   }
+
+  /** Add or remove the solid base platform collider (minigames build their own floor). */
+  private setPlatformEnabled(enabled: boolean): void {
+    if (enabled && !this.platformCollider) {
+      this.platformCollider = this.physics.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(
+          ARENA.platformHalf,
+          ARENA.platformThickness / 2,
+          ARENA.platformHalf,
+        ).setTranslation(0, -ARENA.platformThickness / 2, 0),
+      );
+    } else if (!enabled && this.platformCollider) {
+      this.physics.world.removeCollider(this.platformCollider, false);
+      this.platformCollider = null;
+    }
+  }
 }
 
-function clamp1(n: unknown): number {
-  const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
-  return Math.max(-1, Math.min(1, v));
+function sanitizeInput(msg: InputIntent): InputIntent {
+  const clamp = (n: unknown): number => {
+    const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
+    return Math.max(-1, Math.min(1, v));
+  };
+  return {
+    moveX: clamp(msg?.moveX),
+    moveZ: clamp(msg?.moveZ),
+    run: Boolean(msg?.run),
+    jump: Boolean(msg?.jump),
+    dive: Boolean(msg?.dive),
+    action: Boolean(msg?.action),
+    aimX: clamp(msg?.aimX),
+    aimZ: clamp(msg?.aimZ),
+    seq: typeof msg?.seq === "number" && Number.isFinite(msg.seq) ? msg.seq : 0,
+  };
 }
 
 function sanitizeName(name?: string): string | undefined {

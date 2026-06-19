@@ -22,9 +22,8 @@ export function createScene(): BuiltScene {
   scene.add(sky.mesh);
   scene.add(sky.clouds);
   // Fallback background (in case the dome is clipped) so the void is never black.
-  scene.background = new THREE.Color(0x9fd0bf);
-  // Soft green haze so far trees fade into depth instead of a flat wall.
-  scene.fog = new THREE.Fog(0xbfe0c4, 34, 120);
+  scene.background = new THREE.Color(0x7cc4f5);
+  scene.fog = new THREE.Fog(sky.horizon.getHex(), 60, 320);
 
   // Faint distant ground so looking over an edge shows soft color, not void.
   const ground = new THREE.Mesh(
@@ -50,11 +49,11 @@ export function createScene(): BuiltScene {
   key.shadow.blurSamples = 16;
   key.shadow.bias = -0.0005;
   key.shadow.camera.near = 1;
-  key.shadow.camera.far = 90;
-  key.shadow.camera.left = -38;
-  key.shadow.camera.right = 38;
-  key.shadow.camera.top = 38;
-  key.shadow.camera.bottom = -38;
+  key.shadow.camera.far = 70;
+  key.shadow.camera.left = -26;
+  key.shadow.camera.right = 26;
+  key.shadow.camera.top = 26;
+  key.shadow.camera.bottom = -26;
   scene.add(key);
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.12));

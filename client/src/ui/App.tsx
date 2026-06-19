@@ -6,18 +6,16 @@ import { SolanaProviders } from "../solana/SolanaProviders";
 import { Hud } from "./Hud";
 import { Menu } from "./Menu";
 import { CharacterSelect } from "./CharacterSelect";
-import { SocialLink } from "./SocialLink";
 
 type Screen = "menu" | "select" | "playing";
 
 /**
  * Root component and screen state machine: menu -> character select -> playing.
- * The Three.js game mounts only while playing; a match key lets "Play again"
- * remount a fresh PumpDash match. The whole tree is wrapped in the Solana context.
+ * The Three.js game mounts only while playing; menu/select are pure React. The
+ * whole tree is wrapped in the Solana wallet context.
  */
 export function App() {
   const [screen, setScreen] = useState<Screen>("menu");
-  const [matchKey, setMatchKey] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const state = useSyncExternalStore(gameStore.subscribe, gameStore.getSnapshot);
 
@@ -26,7 +24,7 @@ export function App() {
     void preloadCharacters();
   }, []);
 
-  // Boot the imperative game while on the playing screen; remount on matchKey.
+  // Boot the imperative game only while on the playing screen.
   useEffect(() => {
     if (screen !== "playing") return;
     const canvas = canvasRef.current;
@@ -34,7 +32,7 @@ export function App() {
     const game = new Game(canvas);
     void game.start();
     return () => game.dispose();
-  }, [screen, matchKey]);
+  }, [screen]);
 
   return (
     <SolanaProviders>
@@ -49,14 +47,9 @@ export function App() {
         {screen === "playing" && (
           <>
             <canvas ref={canvasRef} className="game-canvas" />
-            <Hud
-              state={state}
-              onExit={() => setScreen("menu")}
-              onPlayAgain={() => setMatchKey((k) => k + 1)}
-            />
+            <Hud state={state} onExit={() => setScreen("menu")} />
           </>
         )}
-        <SocialLink />
       </div>
     </SolanaProviders>
   );

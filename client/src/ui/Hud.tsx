@@ -1,47 +1,48 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { DASH_CD } from "@engine/pumpdash/PumpDashSim";
-import type { GameState, PumpPlayer } from "../game/store";
+import { useEffect, useState, type ReactNode } from "react";
+import { MAX_PLAYERS, teamColor } from "@party-royale/shared";
+import type { GameState, Standing } from "../game/store";
 import { sound } from "../core/Sound";
 import { onlineCount } from "../game/online";
+import { LobbyPanel } from "./LobbyPanel";
 import { Confetti } from "./Confetti";
 
-type Slot = "top" | "bottom" | "left" | "right";
+const MEDALS = ["/assets/medals/gold.png", "/assets/medals/silver.png", "/assets/medals/bronze.png"];
 
-// Map an arena side to a screen slot given which side the local player guards
-// (the local side is always framed at the bottom of the screen).
-const SLOTS: Record<number, Record<number, Slot>> = {
-  0: { 0: "bottom", 1: "top", 2: "right", 3: "left" },
-  1: { 1: "bottom", 0: "top", 2: "left", 3: "right" },
-  2: { 2: "bottom", 3: "top", 0: "left", 1: "right" },
-  3: { 3: "bottom", 2: "top", 0: "right", 1: "left" },
-};
-const IDENTITY: Record<number, Slot> = { 0: "top", 1: "bottom", 2: "left", 3: "right" };
+/** Short objective + control hint per minigame. */
+function objective(minigame: string): string {
+  if (/soccer|football/i.test(minigame))
+    return "Score in the enemy goal — aim with the mouse, hold E / click to charge a kick";
+  if (/target|range|shoot/i.test(minigame))
+    return "Aim with the mouse, E / click to shoot — gold = +3, avoid the red decoys";
+  if (/climb|tower/i.test(minigame)) return "Climb to the flag — dodge the bars and rolling balls";
+  if (/gem/i.test(minigame))
+    return "Grab gems (gold = most) before red tiles drop — chain grabs for a combo";
+  return "";
+}
 
-function slotFor(youSide: number, side: number): Slot {
-  if (youSide >= 0 && SLOTS[youSide]) return SLOTS[youSide]![side]!;
-  return IDENTITY[side]!;
+function colorHex(index: number): string {
+  return `#${teamColor(index).toString(16).padStart(6, "0")}`;
+}
+
+/** A player's swatch color: team color during team rounds, else candy color. */
+function dotColor(s: Standing): string {
+  if (s.team === 0) return "#4aa3ff";
+  if (s.team === 1) return "#ff5a5a";
+  return colorHex(s.colorIndex);
 }
 
 /**
- * PumpDash HUD: clean green/white cards. Overlays (loading, finding players,
- * countdown, end), the four side score cards arranged around the arena with the
- * local card marked + dash radial, the eliminated banner, and controls.
+ * Heads-up display for the points match: connecting/error overlays, the lobby,
+ * countdown, the live round HUD (prominent timer, goal banner, scoreboard), and
+ * the end screen with medals.
  */
-export function Hud({
-  state,
-  onExit,
-  onPlayAgain,
-}: {
-  state: GameState;
-  onExit: () => void;
-  onPlayAgain: () => void;
-}) {
+export function Hud({ state, onExit }: { state: GameState; onExit: () => void }) {
   if (state.status === "error") {
     return (
       <Overlay>
-        <div className="ov-title">Something went wrong</div>
-        <span className="ov-sub">{state.error || "Could not start the game."}</span>
-        <button className="btn-primary" onClick={() => exit(onExit)}>
+        <div className="hud-error-title">{state.winnerName ? "Match over" : "Something went wrong"}</div>
+        <span>{state.error || "Could not start the game."}</span>
+        <button className="hud-button" onClick={() => exit(onExit)}>
           Back to menu
         </button>
       </Overlay>
@@ -52,135 +53,132 @@ export function Hud({
     return (
       <Overlay>
         <div className="hud-spinner" />
-        <span className="ov-sub">Loading game...</span>
+        <span>Loading game...</span>
       </Overlay>
     );
   }
 
-  if (state.matchPhase === "matchmaking" || state.matchPhase === "") {
+  if (state.matchPhase === "matchmaking") {
     return (
       <Overlay>
         <div className="hud-spinner" />
-        <div className="ov-title">Finding players...</div>
+        <div className="hud-mm-title">Buscando jugadores...</div>
         <Online />
       </Overlay>
     );
   }
 
   const playing = state.matchPhase === "playing";
+  const isSoccer = /soccer|football/i.test(state.minigame);
+  const isShooting = /target|range|shoot/i.test(state.minigame);
+  const isGems = /gem/i.test(state.minigame);
+  const blueGoals = state.standings.find((s) => s.team === 0)?.roundScore ?? 0;
+  const redGoals = state.standings.find((s) => s.team === 1)?.roundScore ?? 0;
 
   return (
     <div className="hud">
-      <div className="hud-card hud-topbar">
-        <div className="hud-brand">Pump Crash</div>
-        <div className="hud-tag">Block the ball. Last one standing wins.</div>
+      <div className="hud-panel hud-topleft">
+        <div className="hud-title">BNB Guys Game</div>
+        <div className="hud-sub">
+          {playing && state.minigame
+            ? `Round ${state.round}/${state.roundCount}: ${state.minigame}`
+            : "Highest points wins"}
+        </div>
       </div>
 
-      <div className="hud-card hud-meta">
-        <span className="meta-kv">
-          <span className="meta-k">FPS</span>
-          <span className="meta-v">{state.fps}</span>
-        </span>
-        <span className="meta-kv">
-          <span className="meta-k">Alive</span>
-          <span className="meta-v">{state.alivePlayers}</span>
-        </span>
+      <div className="hud-panel hud-topright">
+        <div className="hud-stat">
+          <span className="hud-label">FPS</span>
+          <span className="hud-value">{state.fps}</span>
+        </div>
+        <div className="hud-stat">
+          <span className="hud-label">Players</span>
+          <span className="hud-value">
+            {state.playerCount}/{MAX_PLAYERS}
+          </span>
+        </div>
         <MuteButton />
       </div>
 
-      {state.players.map((p) => (
-        <SideScore
-          key={p.id}
-          player={p}
-          slot={slotFor(state.youSide, p.side)}
-          dashReady={state.dashReady}
-          dashCd={state.dashCd}
-        />
-      ))}
+      {playing && (
+        <div className={`hud-clock${state.timer <= 5 ? " low" : ""}`}>{state.timer}</div>
+      )}
+
+      {(playing || state.matchPhase === "intro") && state.standings.length > 0 && (
+        <Scoreboard standings={state.standings} showRound={playing} />
+      )}
 
       {playing && state.banner && <div className="hud-banner">{state.banner}</div>}
 
+      {playing && isSoccer && (
+        <div className="hud-soccer">
+          <span style={{ color: "#4aa3ff" }}>Blue {Math.round(blueGoals)}</span>
+          <span style={{ opacity: 0.6 }}> &ndash; </span>
+          <span style={{ color: "#ff5a5a" }}>{Math.round(redGoals)} Red</span>
+        </div>
+      )}
+
+      {playing && state.minigame && !isSoccer && (
+        <div className="hud-hint" style={{ top: 64, bottom: "auto" }}>
+          {objective(state.minigame)}
+        </div>
+      )}
+
+      {playing && isShooting && <div className="hud-crosshair" aria-hidden />}
+      {playing && (isShooting || isGems) && state.localCombo > 1 && (
+        <div className="hud-combo">Combo x{state.localCombo}</div>
+      )}
+
+      {playing && state.scorePop.amount !== 0 && (
+        <div
+          key={state.scorePop.key}
+          className={`score-pop${state.scorePop.amount < 0 ? " neg" : ""}`}
+        >
+          {state.scorePop.amount > 0 ? "+" : ""}
+          {Math.round(state.scorePop.amount)}
+        </div>
+      )}
+
+      {state.matchPhase === "waiting" && <LobbyPanel state={state} />}
+
       {state.matchPhase === "countdown" && (
-        <div className="hud-countdown">{state.timer > 0 ? state.timer : "Go!"}</div>
+        <div className="hud-center-big">{state.timer > 0 ? state.timer : "Go!"}</div>
+      )}
+
+      {state.matchPhase === "intro" && (
+        <div className="hud-intro">
+          <div className="hud-intro-round">
+            Round {state.round}/{state.roundCount}
+          </div>
+          <div className="hud-intro-name">{state.minigame}</div>
+          <div className="hud-intro-go">{objective(state.minigame)}</div>
+        </div>
       )}
 
       {state.matchPhase === "ended" && (
         <Overlay>
           <Confetti />
-          <div className="ov-title">
-            {state.isLocalWinner ? "You win!" : `${state.winnerName || "Nobody"} wins`}
-          </div>
-          {state.localPlacement > 0 && (
-            <div className="ov-sub">
-              You placed #{state.localPlacement} of {state.players.length}
-            </div>
+          {state.isLocalWinner ? (
+            <div className="hud-win-title">You win!</div>
+          ) : (
+            <div className="hud-win-title">{state.winnerName || "Nobody"} wins</div>
           )}
-          <div className="ov-actions">
-            <button className="btn-secondary" onClick={() => exit(onExit)}>
-              Menu
-            </button>
-            <button
-              className="btn-primary"
-              onClick={() => {
-                sound.play("confirm");
-                onPlayAgain();
-              }}
-            >
-              Play again
-            </button>
-          </div>
+          <MedalStandings standings={state.standings} />
+          <button className="hud-button" onClick={() => exit(onExit)}>
+            Back to menu
+          </button>
         </Overlay>
       )}
 
-      {(playing || state.matchPhase === "countdown") && (
-        <div className="hud-controls">
-          <kbd>A</kbd> <kbd>D</kbd> slide <span className="ctrl-sep" /> <kbd>Space</kbd> dash
+      {state.usingFallback && (
+        <div className="hud-warn hud-warn-bottom">
+          Placeholder characters. Run <code>pnpm assets:prepare</code> for the KayKit model.
         </div>
       )}
-    </div>
-  );
-}
 
-function SideScore({
-  player,
-  slot,
-  dashReady,
-  dashCd,
-}: {
-  player: PumpPlayer;
-  slot: Slot;
-  dashReady: boolean;
-  dashCd: number;
-}) {
-  const out = !player.alive;
-  const [bump, setBump] = useState(false);
-  const prev = useRef(player.points);
-  useEffect(() => {
-    if (player.points < prev.current) {
-      setBump(true);
-      const t = setTimeout(() => setBump(false), 440);
-      prev.current = player.points;
-      return () => clearTimeout(t);
-    }
-    prev.current = player.points;
-    return undefined;
-  }, [player.points]);
-  const cls = `pcard side-${slot}${player.isLocal ? " you" : ""}${out ? " out" : ""}${bump ? " bump" : ""}`;
-  const pct = dashReady ? 100 : Math.max(0, Math.min(100, (1 - dashCd / DASH_CD) * 100));
-  return (
-    <div className={cls}>
-      <div className="pcard-name">
-        {player.name}
-        {player.isLocal && <span className="pcard-you">YOU</span>}
-      </div>
-      <div className="pcard-score">{out ? "OUT" : player.points}</div>
-      {player.isLocal && !out && (
-        <div className="pcard-dash">
-          <span
-            className={`dash-dot${dashReady ? " ready" : ""}`}
-            style={{ background: `conic-gradient(var(--brand-green) ${pct}%, rgba(255,255,255,0.18) 0)` }}
-          />
-          <span className="dash-label">{dashReady ? "Dash ready" : "Dash"}</span>
+      {(playing || state.matchPhase === "countdown" || state.matchPhase === "waiting") && (
+        <div className="hud-hint">
+          WASD move &middot; Shift run &middot; Space jump &middot; E / click action &middot; 1-4 emote
         </div>
       )}
     </div>
@@ -197,7 +195,7 @@ export function Online({ compact = false }: { compact?: boolean }) {
   return (
     <div className={compact ? "online online-compact" : "online"}>
       <span className="online-dot" />
-      {n.toLocaleString()} online
+      {n.toLocaleString()} {compact ? "online" : "jugadores en línea"}
     </div>
   );
 }
@@ -210,7 +208,7 @@ function MuteButton() {
       title={muted ? "Unmute" : "Mute"}
       onClick={() => setMuted(sound.toggleMuted())}
     >
-      {muted ? "Muted" : "Sound"}
+      {muted ? "Sound: off" : "Sound: on"}
     </button>
   );
 }
@@ -220,10 +218,62 @@ function exit(onExit: () => void): void {
   onExit();
 }
 
+function Scoreboard({ standings, showRound }: { standings: readonly Standing[]; showRound: boolean }) {
+  return (
+    <div className="hud-panel" style={{ position: "absolute", top: 110, right: 16, minWidth: 188 }}>
+      <div className="hud-label">Standings</div>
+      {standings.map((s) => (
+        <div
+          key={s.id}
+          style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: s.isLocal ? 700 : 400 }}
+        >
+          <span className="team-dot" style={{ background: dotColor(s) }} />
+          <span
+            style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {s.name}
+            {s.isLocal ? " (you)" : ""}
+          </span>
+          {showRound && (
+            <span className="hud-dim" style={{ minWidth: 18, textAlign: "right" }}>
+              +{Math.round(s.roundScore)}
+            </span>
+          )}
+          <span className="hud-value" style={{ minWidth: 22, textAlign: "right" }}>
+            {s.points}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MedalStandings({ standings }: { standings: readonly Standing[] }) {
+  return (
+    <div className="medal-row">
+      {standings.map((s, i) => (
+        <div className="medal-line" key={s.id}>
+          {i < 3 ? (
+            <img src={MEDALS[i]} alt={`#${i + 1}`} />
+          ) : (
+            <span className="medal-rank">#{i + 1}</span>
+          )}
+          <span className="team-dot" style={{ background: dotColor(s) }} />
+          <span className="medal-name">
+            {s.name}
+            {s.isLocal ? " (you)" : ""}
+          </span>
+          <span className="medal-pts">{s.points} pts</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Overlay({ children }: { children: ReactNode }) {
   return (
     <div className="hud">
-      <div className="ov-card">{children}</div>
+      <div className="hud-loading">{children}</div>
     </div>
   );
 }

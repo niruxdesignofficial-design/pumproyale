@@ -29,10 +29,6 @@ export class PlayerState extends Schema {
   emote = "";
   /** Current shooting combo streak (0 outside the shooting round). */
   combo = 0;
-  /** PumpDash arena side this player guards (0 top, 1 bottom, 2 left, 3 right). */
-  side = 0;
-  /** PumpDash dash cooldown remaining (seconds; 0 = ready). */
-  dashCd = 0;
 }
 
 defineTypes(PlayerState, {
@@ -53,8 +49,6 @@ defineTypes(PlayerState, {
   team: "number",
   emote: "string",
   combo: "number",
-  side: "number",
-  dashCd: "number",
 });
 
 /**
