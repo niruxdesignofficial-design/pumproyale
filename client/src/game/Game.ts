@@ -9,7 +9,7 @@ import { GameLoop } from "../core/GameLoop";
 import { Input } from "../core/Input";
 import { sound } from "../core/Sound";
 import { createScene } from "./Scene";
-import { Arena, makeBall, makeObstacle } from "./Arena";
+import { Arena, makeBall, makeObstacle, makeBlobShadow } from "./Arena";
 import { preloadProps } from "./Props";
 import { Avatar } from "./Avatar";
 import { getCharacterGltf, preloadCharacters } from "./characterModel";
@@ -25,12 +25,21 @@ const BALL_LERP_K = 18; // ball position smoothing rate
 
 interface BallView {
   mesh: THREE.Mesh;
+  shadow: THREE.Mesh;
   tx: number;
   ty: number;
   tz: number;
   px: number; // previous target (for velocity)
   pz: number;
+  pvx: number; // previous velocity (for bounce detection)
+  pvz: number;
   flash: number;
+  squash: number;
+  trailTimer: number;
+}
+interface Trail {
+  mesh: THREE.Mesh;
+  ttl: number;
 }
 interface Obst {
   group: THREE.Group;
@@ -88,6 +97,7 @@ export class Game {
   private readonly obstacles: Obst[] = [];
   private readonly shocks: Shock[] = [];
   private readonly particles: Particle[] = [];
+  private readonly trails: Trail[] = [];
   private readonly cAnim = new Map<string, string>();
   private readonly cEmote = new Map<string, string>();
   private readonly cPoints = new Map<string, number>();
@@ -179,14 +189,19 @@ export class Game {
     this.session = null;
     for (const avatar of this.avatars.values()) avatar.dispose();
     this.avatars.clear();
-    for (const b of this.balls) this.disposeMesh(b.mesh);
+    for (const b of this.balls) {
+      this.disposeMesh(b.mesh);
+      this.disposeMesh(b.shadow);
+    }
     this.balls.length = 0;
     for (const o of this.obstacles) this.scene.remove(o.group);
     this.obstacles.length = 0;
     for (const s of this.shocks) this.disposeMesh(s.mesh);
     for (const p of this.particles) this.disposeMesh(p.mesh);
+    for (const tr of this.trails) this.disposeMesh(tr.mesh);
     this.shocks.length = 0;
     this.particles.length = 0;
+    this.trails.length = 0;
     if (this.arena) {
       this.scene.remove(this.arena.group);
       this.arena.dispose();
@@ -220,6 +235,7 @@ export class Game {
     for (const avatar of this.avatars.values()) avatar.update(dt);
     this.updateBalls(dt);
     this.updateEffects(dt);
+    this.arena?.update(dt);
     this.updateCamera(dt);
     this.renderer.render(this.scene, this.cameraRig.camera);
 
@@ -260,6 +276,7 @@ export class Game {
 
       const prevPts = this.cPoints.get(id) ?? p.points;
       if (p.points < prevPts && this.matchPhase === "playing") {
+        this.arena?.flashSide(p.side);
         if (isLocal) {
           sound.play("lose");
           this.addShake(0.3);
@@ -313,12 +330,41 @@ export class Game {
     while (this.balls.length < ballEnts.length) {
       const mesh = makeBall(BALL_R);
       this.scene.add(mesh);
-      this.balls.push({ mesh, tx: 0, ty: BALL_R, tz: 0, px: 0, pz: 0, flash: 0 });
+      const shadow = makeBlobShadow(BALL_R * 1.5, 0.55);
+      this.scene.add(shadow);
+      this.balls.push({
+        mesh,
+        shadow,
+        tx: 0,
+        ty: BALL_R,
+        tz: 0,
+        px: 0,
+        pz: 0,
+        pvx: 0,
+        pvz: 0,
+        flash: 0,
+        squash: 0,
+        trailTimer: 0,
+      });
     }
-    while (this.balls.length > ballEnts.length) this.disposeMesh(this.balls.pop()!.mesh);
+    while (this.balls.length > ballEnts.length) {
+      const b = this.balls.pop()!;
+      this.disposeMesh(b.mesh);
+      this.disposeMesh(b.shadow);
+    }
     for (let i = 0; i < ballEnts.length; i++) {
       const b = this.balls[i]!;
       const e = ballEnts[i]!;
+      // New step velocity; a sharp direction change = a bounce (squash it).
+      const nvx = e.x - b.tx;
+      const nvz = e.z - b.tz;
+      const sp = Math.hypot(nvx, nvz);
+      const psp = Math.hypot(b.pvx, b.pvz);
+      if (sp > 0.02 && psp > 0.02 && (nvx * b.pvx + nvz * b.pvz) / (sp * psp) < 0.4) {
+        b.squash = 1;
+      }
+      b.pvx = nvx;
+      b.pvz = nvz;
       b.px = b.tx;
       b.pz = b.tz;
       b.tx = e.x;
@@ -351,6 +397,26 @@ export class Game {
       b.mesh.position.z += (b.tz - b.mesh.position.z) * k;
       b.mesh.rotation.x += 6 * dt;
       b.mesh.rotation.y += 4 * dt;
+
+      // Contact shadow tracks the ball on the floor.
+      b.shadow.position.set(b.mesh.position.x, 0.06, b.mesh.position.z);
+
+      // Squash/stretch on bounce.
+      if (b.squash > 0) {
+        const q = b.squash;
+        b.mesh.scale.set(1 + 0.22 * q, 1 - 0.3 * q, 1 + 0.22 * q);
+        b.squash = Math.max(0, b.squash - dt * 6);
+      } else {
+        b.mesh.scale.set(1, 1, 1);
+      }
+
+      // Motion trail when moving fast (state runs at 30 Hz).
+      const speed = Math.hypot(b.pvx, b.pvz) * 30;
+      b.trailTimer -= dt;
+      if (speed > 9 && b.trailTimer <= 0) {
+        b.trailTimer = 0.035;
+        this.spawnTrail(b.mesh.position);
+      }
 
       // Dash block: during the dash window, a ball near the local paddle now
       // heading inward = a strong block; flash + shake + pop.
@@ -416,6 +482,31 @@ export class Game {
         this.particles.splice(i, 1);
       }
     }
+    for (let i = this.trails.length - 1; i >= 0; i--) {
+      const tr = this.trails[i]!;
+      tr.ttl -= dt;
+      (tr.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, tr.ttl / 0.22) * 0.5;
+      tr.mesh.scale.multiplyScalar(1 - dt * 2.5);
+      if (tr.ttl <= 0) {
+        this.disposeMesh(tr.mesh);
+        this.trails.splice(i, 1);
+      }
+    }
+  }
+
+  private spawnTrail(pos: THREE.Vector3): void {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_R * 0.7, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0x4fe08a,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+      }),
+    );
+    m.position.copy(pos);
+    this.scene.add(m);
+    this.trails.push({ mesh: m, ttl: 0.22 });
   }
 
   private triggerDash(): void {

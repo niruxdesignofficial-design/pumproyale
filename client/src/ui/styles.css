@@ -760,7 +760,19 @@ body,
   align-items: center;
   gap: 3px;
   pointer-events: none;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease, box-shadow 0.25s ease;
+  animation: card-in 0.35s ease both;
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.pcard.bump {
+  box-shadow: 0 0 0 3px rgba(255, 120, 120, 0.85), var(--card-shadow);
 }
 .side-top {
   top: 16px;
@@ -808,9 +820,10 @@ body,
   padding: 1px 6px;
 }
 .pcard-score {
-  font-size: 34px;
+  font-size: 40px;
   font-weight: 800;
   line-height: 1;
+  letter-spacing: -0.01em;
   color: var(--brand-green-hi);
 }
 .pcard.out .pcard-score {

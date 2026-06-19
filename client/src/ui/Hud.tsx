@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DASH_CD } from "@engine/pumpdash/PumpDashSim";
 import type { GameState, PumpPlayer } from "../game/store";
 import { sound } from "../core/Sound";
@@ -153,7 +153,19 @@ function SideScore({
   dashCd: number;
 }) {
   const out = !player.alive;
-  const cls = `pcard side-${slot}${player.isLocal ? " you" : ""}${out ? " out" : ""}`;
+  const [bump, setBump] = useState(false);
+  const prev = useRef(player.points);
+  useEffect(() => {
+    if (player.points < prev.current) {
+      setBump(true);
+      const t = setTimeout(() => setBump(false), 440);
+      prev.current = player.points;
+      return () => clearTimeout(t);
+    }
+    prev.current = player.points;
+    return undefined;
+  }, [player.points]);
+  const cls = `pcard side-${slot}${player.isLocal ? " you" : ""}${out ? " out" : ""}${bump ? " bump" : ""}`;
   const pct = dashReady ? 100 : Math.max(0, Math.min(100, (1 - dashCd / DASH_CD) * 100));
   return (
     <div className={cls}>
