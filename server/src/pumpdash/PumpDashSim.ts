@@ -11,15 +11,15 @@
 
 // --- knobs ----------------------------------------------------------------
 export const ARENA_HALF = 9; // half-extent of the square arena (world units)
-export const PADDLE_HALF = 1.8; // half-width of a paddle along its slide axis
+export const PADDLE_HALF = 1.55; // half-width of a paddle along its slide axis
 export const PADDLE_RANGE = ARENA_HALF - 1.6; // clamp so paddles stay off the corners
 export const PADDLE_SPEED = 12; // paddle slide speed (units/sec)
 export const BALL_R = 0.55;
-export const START_POINTS = 15;
-export const BALL_SPEED = 8.5; // base ball speed at match start
-export const SPEED_RAMP = 0.14; // +units/sec of speed per second of play
-export const SPEED_MAX = 17;
-export const SPEED_BUMP = 0.5; // base speed added on every concede
+export const START_POINTS = 8;
+export const BALL_SPEED = 9.5; // base ball speed at match start
+export const SPEED_RAMP = 0.22; // +units/sec of speed per second of play
+export const SPEED_MAX = 18;
+export const SPEED_BUMP = 0.8; // base speed added on every concede
 export const BALL_COUNT = 1;
 export const DASH_IMPULSE = 5; // extra ball speed on a dashed block
 export const DASH_CD = 1.1; // dash cooldown (s)
@@ -473,8 +473,8 @@ function clamp(v: number, lo: number, hi: number): number {
 
 function randomSkill(): BotSkill {
   return {
-    react: 0.06 + Math.random() * 0.16,
-    err: 0.25 + Math.random() * 1.1,
-    speed: 0.78 + Math.random() * 0.22,
+    react: 0.08 + Math.random() * 0.18,
+    err: 0.5 + Math.random() * 1.7,
+    speed: 0.68 + Math.random() * 0.24,
   };
 }

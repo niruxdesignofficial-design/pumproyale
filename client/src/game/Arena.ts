@@ -122,48 +122,28 @@ export class Arena {
       }
     }
 
-    this.buildBerm(H);
     this.scatterProps(H);
   }
 
-  /** A raised tile berm just outside the court, like low stands. */
-  private buildBerm(H: number): void {
-    const tiles: PropName[] = ["tileLarge_forest", "tileMedium_forest", "tileHigh_forest"];
-    const reach = H + 2.6;
-    const step = 2.0;
-    for (let i = -reach; i <= reach; i += step) {
-      this.placeTile(tiles, i, -reach);
-      this.placeTile(tiles, i, reach);
-      this.placeTile(tiles, -reach, i);
-      this.placeTile(tiles, reach, i);
-    }
-  }
-
-  private placeTile(tiles: PropName[], x: number, z: number): void {
-    const prop = getProp(tiles[Math.floor(Math.random() * tiles.length)]!);
-    if (!prop) return;
-    prop.position.set(x, -0.3, z);
-    const s = 1.9 + Math.random() * 0.3;
-    prop.scale.setScalar(s);
-    prop.rotation.y = Math.floor(Math.random() * 4) * (Math.PI / 2);
-    this.group.add(prop);
-  }
-
-  /** Scatter trees, rocks and plants in a ring beyond the berm. */
+  /**
+   * Scatter trees, rocks and plants in a wide ring well clear of the court, so
+   * the players stay fully visible. A few plants hug the court for a tidy edge.
+   */
   private scatterProps(H: number): void {
-    const decor: { name: PropName; scale: [number, number]; count: number; rMin: number }[] = [
-      { name: "tree_forest", scale: [1.6, 2.6], count: 22, rMin: H + 7 },
-      { name: "rocksA_forest", scale: [1.2, 2.0], count: 10, rMin: H + 5 },
-      { name: "rocksB_forest", scale: [1.2, 2.0], count: 8, rMin: H + 5 },
-      { name: "plantA_forest", scale: [1.2, 1.8], count: 14, rMin: H + 4 },
-      { name: "plantB_forest", scale: [1.2, 1.8], count: 12, rMin: H + 4 },
+    const ringStart = H + 6; // keep everything clear of the court + paddles
+    const decor: { name: PropName; scale: [number, number]; count: number; spread: number }[] = [
+      { name: "tree_forest", scale: [1.6, 2.8], count: 34, spread: 46 },
+      { name: "rocksA_forest", scale: [1.1, 1.9], count: 12, spread: 40 },
+      { name: "rocksB_forest", scale: [1.1, 1.9], count: 10, spread: 40 },
+      { name: "plantA_forest", scale: [1.0, 1.6], count: 16, spread: 38 },
+      { name: "plantB_forest", scale: [1.0, 1.6], count: 14, spread: 38 },
     ];
     for (const d of decor) {
       for (let i = 0; i < d.count; i++) {
         const prop = getProp(d.name);
         if (!prop) break;
         const ang = Math.random() * Math.PI * 2;
-        const r = d.rMin + Math.random() * 34;
+        const r = ringStart + Math.random() * d.spread;
         prop.position.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
         prop.scale.setScalar(d.scale[0] + Math.random() * (d.scale[1] - d.scale[0]));
         prop.rotation.y = Math.random() * Math.PI * 2;
@@ -197,10 +177,10 @@ export function makeBall(radius: number): THREE.Mesh {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 28, 20),
     new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      emissive: 0xa8f5c8,
-      emissiveIntensity: 0.3,
-      roughness: 0.22,
+      color: 0x32c46e,
+      emissive: 0x37d97a,
+      emissiveIntensity: 0.45,
+      roughness: 0.25,
       metalness: 0.05,
     }),
   );

@@ -368,13 +368,13 @@ export class Game {
       }
 
       const mat = b.mesh.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 0.3 + b.flash * 1.6;
+      mat.emissiveIntensity = 0.45 + b.flash * 1.8;
       const col = mat.emissive;
       if (b.flash > 0) {
-        col.setHex(0x9cf7c4);
+        col.setHex(0xc6ffdd);
         b.flash = Math.max(0, b.flash - dt * 3);
       } else {
-        col.setHex(0xa8f5c8);
+        col.setHex(0x37d97a);
       }
     }
   }
