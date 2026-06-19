@@ -1,12 +1,12 @@
-// The player's Solana wallet address, typed/pasted in the menu (not a Phantom
-// connection). Required before joining a match; persisted to localStorage so it
-// sticks across sessions. Mirrors name.ts.
+// The player's BNB Chain (BSC) wallet address, typed/pasted in the menu.
+// Required before joining a match; persisted to localStorage so it sticks across
+// sessions. Mirrors name.ts.
 
 const KEY = "party-royale.wallet";
 const MAX = 64;
 
-// Base58 (no 0, O, I, l), 32-44 chars — the shape of a Solana public key.
-const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+// EVM / BNB Chain address: 0x followed by 40 hex characters.
+const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 let current = load();
 

@@ -60,12 +60,12 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
         </div>
 
         <div className="name-row">
-          <span className="name-label">Your wallet address</span>
+          <span className="name-label">Your BNB wallet address</span>
           <input
             className="name-input"
             value={wallet}
             maxLength={64}
-            placeholder="Paste your Solana wallet address"
+            placeholder="Paste your BNB (BSC) wallet address (0x...)"
             spellCheck={false}
             autoComplete="off"
             onChange={(e) => setWallet(e.target.value)}
@@ -74,7 +74,7 @@ export function Menu({ onPlay }: { onPlay: () => void }) {
             }}
           />
           {wallet.length > 0 && !walletOk && (
-            <span className="name-warn">Enter a valid wallet address to play.</span>
+            <span className="name-warn">Enter a valid BNB wallet address (0x...) to play.</span>
           )}
         </div>
 
